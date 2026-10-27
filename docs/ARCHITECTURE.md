@@ -1,6 +1,6 @@
 # Architecture
 
-AppimageMannger is a Rust 2024 Linux application using Ely Core (the general UI component crate of Ely GPUI Components) and GPUI's native X11/Wayland platform. Ely is pinned at a reviewed upstream commit; Cargo.lock records dependency resolution. No browser/webview is involved.
+AppimageMannger is a Rust 2024 Linux application whose default frontend uses Ely Core (the general UI component crate of Ely GPUI Components) and GPUI's native X11/Wayland platform. Ely is pinned at a reviewed upstream commit; Cargo.lock records dependency resolution. No browser/webview is involved.
 
 - `src/ui.rs`: menus, keyboard bindings, master/detail library, settings, import, update and uninstall confirmations. Blocking work runs on worker threads and returns to the GPUI entity through a oneshot channel.
 - `src/manager.rs`: XDG configuration, default `$HOME/Applications`, ELF header/section parsing, metadata and desktop integration, import and freedesktop Trash uninstall.
@@ -15,3 +15,9 @@ Updates need embedded `gh-releases-zsync` information, a supported desktop repos
 Latest GitHub stable releases exclude prereleases. Both the asset name and downloaded ELF architecture are checked. A successful update retains the old binary in the manager's XDG data backup directory. An upstream GitHub SHA-256 digest is checked when provided; without one the app can validate format and transfer size but cannot claim independent publisher authenticity.
 
 CodeGraph index is local in `.codegraph/` and ignored by Git. Run `codegraph init -y .` after cloning and `codegraph sync .` after edits.
+
+## Native toolkit selection
+
+The `window_style` setting now selects a real toolkit frontend: `gpui` uses Ely Core + GPUI, `qt` executes a Qt 6 Widgets frontend, and `gnome` executes a GTK 4/libadwaita frontend. Native C/C++ helpers are compiled by `build.rs`, embedded for portable development and exported into `/usr/lib/appimage-mannger` by native packaging. They communicate with the Rust engine through bounded JSON requests (`--rpc`) using argument arrays, with no shell. All modes read and write the same atomic XDG configuration. Switching toolkits persists the selection and restarts through the engine launcher. Appearance, dimensions, selection and editing drafts have separate persisted fields.
+
+AppImage icon resolution first looks up the desktop entry's real theme icon, then reads an embedded SquashFS `.DirIcon` or desktop icon through bounded `unsquashfs -cat` calls. Scanning does not execute or mount the AppImage. Cached icons are keyed by file path, mtime and size.
