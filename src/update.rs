@@ -59,7 +59,8 @@ pub fn check_update(app: &AppInfo) -> Result<UpdateCheck> {
             release_url: String::new(),
             notes: String::new(),
             asset: None,
-            status: "未配置更新源：请填写此应用的 GitHub 仓库".into(),
+            status: "Update source is not configured; enter the application GitHub repository"
+                .into(),
         });
     };
     let repo = manager::normalize_repository(repo)?;
@@ -75,12 +76,12 @@ fn client(timeout: u64) -> Result<Client> {
         .user_agent(concat!("AppimageMannger/", env!("CARGO_PKG_VERSION")))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
             if attempt.previous().len() > 8 {
-                return attempt.error("重定向次数过多");
+                return attempt.error("Too many redirects");
             }
             if allowed_url(attempt.url().as_str()) {
                 attempt.follow()
             } else {
-                attempt.error("拒绝不安全的更新重定向")
+                attempt.error("Refusing an insecure update redirect")
             }
         }))
         .build()?)
@@ -103,24 +104,28 @@ fn allowed_url(url: &str) -> bool {
     false
 }
 fn check_update_at(app: &AppInfo, url: &str) -> Result<UpdateCheck> {
-    ensure!(allowed_url(url), "更新 API 必须使用 HTTPS");
+    ensure!(allowed_url(url), "Update API must use HTTPS");
     let response = client(35)?
         .get(url)
         .header("Accept", "application/vnd.github+json")
         .send()
-        .context("无法连接更新服务器")?;
+        .context("Cannot connect to the update server")?;
     let status = response.status();
     ensure!(
         status.is_success(),
-        "检查更新失败，服务器返回 {status}（GitHub API 可能限流）"
+        "Update check failed with HTTP {status}; the GitHub API may be rate limited"
     );
     let mut bytes = Vec::new();
     response.take(4 * 1024 * 1024 + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= 4 * 1024 * 1024, "更新 API 响应过大");
-    let release: Release = serde_json::from_slice(&bytes).context("更新服务器的响应格式无效")?;
+    ensure!(
+        bytes.len() <= 4 * 1024 * 1024,
+        "Update API response is too large"
+    );
+    let release: Release =
+        serde_json::from_slice(&bytes).context("Invalid update server response")?;
     ensure!(
         !release.draft && !release.prerelease,
-        "最新版本不是稳定版本"
+        "Latest release is not a stable release"
     );
     let latest = release.tag_name.trim_start_matches('v').to_string();
     let current = app.version.trim_start_matches('v');
@@ -161,15 +166,15 @@ fn check_update_at(app: &AppInfo, url: &str) -> Result<UpdateCheck> {
         None
     };
     let status = if comparison.is_none() {
-        "无法比较当前版本；请核对发布页面"
+        "Cannot compare the current version; review the release page"
     } else if !newer {
-        "已是最新版本"
+        "Application is up to date"
     } else if ambiguous {
-        "存在多个适合的安装包，请在发布页面核对"
+        "Multiple matching assets found; review the release page"
     } else if asset.is_none() {
-        "存在新版本，但没有适合本机架构的 AppImage"
+        "A newer release exists but no AppImage matches this architecture"
     } else {
-        "发现新版本，可以安装更新"
+        "A newer release is available and can be installed"
     }
     .to_string();
     Ok(UpdateCheck {
@@ -252,18 +257,21 @@ pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Re
     manager::validate_appimage(&app.path)?;
     ensure!(
         asset_matches(&asset.name, std::env::consts::ARCH),
-        "更新包架构与本机不匹配"
+        "Update asset architecture does not match this machine"
     );
-    ensure!(allowed_url(&asset.url), "更新下载地址必须使用 HTTPS");
+    ensure!(
+        allowed_url(&asset.url),
+        "Update download URL must use HTTPS"
+    );
     ensure!(
         asset.size > 64 && asset.size <= 4 * 1024 * 1024 * 1024,
-        "更新包大小不合法"
+        "Invalid update asset size"
     );
     let mut download = tempfile::NamedTempFile::new_in(&config.applications_dir)?;
     let mut response = client(300)?
         .get(&asset.url)
         .send()
-        .context("下载更新失败")?
+        .context("Failed to download update")?
         .error_for_status()?;
     let mut hasher = Sha256::new();
     let mut total = 0u64;
@@ -276,24 +284,24 @@ pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Re
         total += count as u64;
         ensure!(
             total <= asset.size && total <= 4 * 1024 * 1024 * 1024,
-            "下载包大小超出预期"
+            "Downloaded asset exceeds the expected size"
         );
         hasher.update(&buf[..count]);
         download.write_all(&buf[..count])?;
     }
     ensure!(
         total == asset.size,
-        "下载不完整：预期 {} 字节，实际 {total} 字节",
+        "Incomplete download: expected {} bytes, received {total} bytes",
         asset.size
     );
     let computed = hex::encode(hasher.finalize());
     if let Some(digest) = &asset.digest {
         let expected = digest
             .strip_prefix("sha256:")
-            .context("服务器提供了不支持的校验算法")?;
+            .context("Server provided an unsupported digest algorithm")?;
         ensure!(
             expected.eq_ignore_ascii_case(&computed),
-            "SHA-256 校验失败，原应用保持不变"
+            "SHA-256 verification failed; original application is unchanged"
         );
     }
     let header = manager::validate_appimage(download.path())?;
@@ -301,7 +309,7 @@ pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Re
     ensure!(
         (std::env::consts::ARCH == "x86_64" && machine == 62)
             || (std::env::consts::ARCH == "aarch64" && machine == 183),
-        "下载文件的 ELF 架构与本机不匹配"
+        "Downloaded ELF architecture does not match this machine"
     );
     download
         .as_file()
@@ -331,7 +339,7 @@ pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Re
             .set_permissions(fs::Permissions::from_mode(0o755))?;
         restore.as_file().sync_all()?;
         restore.persist(&app.path).map_err(|e| e.error)?;
-        return Err(error.context("更新未完成，已恢复原应用"));
+        return Err(error.context("Update failed; original application was restored"));
     }
     result
 }
@@ -407,6 +415,7 @@ mod tests {
         let config = Config {
             applications_dir: dir.path().into(),
             repositories: BTreeMap::new(),
+            ..Config::default()
         };
         let app = manager::inspect(&config, &p).unwrap();
         let check = check_update_at(&app, &serve(body.into_bytes())).unwrap();
@@ -422,6 +431,7 @@ mod tests {
         let config = Config {
             applications_dir: dir.path().into(),
             repositories: BTreeMap::new(),
+            ..Config::default()
         };
         let app = manager::inspect(&config, &p).unwrap();
         let asset = UpdateAsset {
@@ -455,6 +465,7 @@ mod tests {
             let config = Config {
                 applications_dir: dir.path().into(),
                 repositories: BTreeMap::new(),
+                ..Config::default()
             };
             let app = manager::inspect(&config, &p).unwrap();
             let mut new = fixture();
@@ -482,6 +493,7 @@ mod tests {
         let config = Config {
             applications_dir: dir.path().into(),
             repositories: BTreeMap::new(),
+            ..Config::default()
         };
         let app = manager::inspect(&config, &p).unwrap();
         let asset = UpdateAsset {

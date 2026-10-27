@@ -12,11 +12,54 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Appearance {
+    #[default]
+    Light,
+    Dark,
+}
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WindowStyle {
+    #[default]
+    Gpui,
+    Qt,
+    Gnome,
+}
+fn default_language() -> String {
+    "system".into()
+}
+fn default_width() -> f32 {
+    1160.0
+}
+fn default_height() -> f32 {
+    800.0
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
+    #[serde(default = "default_language")]
+    pub language: String,
     pub applications_dir: PathBuf,
     #[serde(default)]
     pub repositories: BTreeMap<String, String>,
+    #[serde(default)]
+    pub appearance: Appearance,
+    #[serde(default)]
+    pub window_style: WindowStyle,
+    #[serde(default)]
+    pub last_selected_path: Option<PathBuf>,
+    #[serde(default = "default_width")]
+    pub window_width: f32,
+    #[serde(default = "default_height")]
+    pub window_height: f32,
+    #[serde(default)]
+    pub maximized: bool,
+    #[serde(default)]
+    pub directory_draft: Option<String>,
+    #[serde(default)]
+    pub repository_drafts: BTreeMap<String, String>,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -25,28 +68,63 @@ impl Default for Config {
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("Applications"),
             repositories: BTreeMap::new(),
+            language: default_language(),
+            appearance: Appearance::Light,
+            window_style: WindowStyle::Gpui,
+            last_selected_path: None,
+            window_width: default_width(),
+            window_height: default_height(),
+            maximized: false,
+            directory_draft: None,
+            repository_drafts: BTreeMap::new(),
         }
     }
 }
 impl Config {
     pub fn load() -> Result<Self> {
-        let path = config_path()?;
+        Self::load_from(&config_path()?)
+    }
+    fn load_from(path: &Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let config: Self = serde_json::from_slice(&fs::read(path)?)?;
+        let mut config: Self = serde_json::from_slice(&fs::read(path)?)?;
+        let legacy: Vec<_> = config
+            .repository_drafts
+            .keys()
+            .filter(|k| Path::new(k).is_absolute())
+            .cloned()
+            .collect();
+        for key in legacy {
+            if let Some(value) = config.repository_drafts.remove(&key)
+                && let Some(name) = Path::new(&key).file_name()
+            {
+                config
+                    .repository_drafts
+                    .entry(name.to_string_lossy().into_owned())
+                    .or_insert(value);
+            }
+        }
+        if !config.window_width.is_finite() || !(880.0..=7680.0).contains(&config.window_width) {
+            config.window_width = default_width();
+        }
+        if !config.window_height.is_finite() || !(580.0..=4320.0).contains(&config.window_height) {
+            config.window_height = default_height();
+        }
         ensure!(
             config.applications_dir.is_absolute(),
-            "应用目录必须是绝对路径"
+            "Applications directory must be an absolute path"
         );
         Ok(config)
     }
     pub fn save(&self) -> Result<()> {
+        self.save_to(&config_path()?)
+    }
+    fn save_to(&self, path: &Path) -> Result<()> {
         ensure!(
             self.applications_dir.is_absolute(),
-            "应用目录必须是绝对路径"
+            "Applications directory must be an absolute path"
         );
-        let path = config_path()?;
         fs::create_dir_all(path.parent().unwrap())?;
         let mut tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
         tmp.write_all(&serde_json::to_vec_pretty(self)?)?;
@@ -57,7 +135,7 @@ impl Config {
 }
 fn config_path() -> Result<PathBuf> {
     Ok(dirs::config_dir()
-        .context("无法确定配置目录")?
+        .context("Cannot determine the configuration directory")?
         .join("appimage-mannger/config.json"))
 }
 fn applications_desktop_dir() -> Result<PathBuf> {
@@ -76,13 +154,17 @@ pub struct AppInfo {
     pub update_info: Option<String>,
     pub desktop_file: Option<PathBuf>,
     pub architecture: String,
+    pub icon_path: Option<PathBuf>,
 }
 
 pub fn scan(config: &Config) -> Result<Vec<AppInfo>> {
     if !config.applications_dir.exists() {
         return Ok(vec![]);
     }
-    ensure!(config.applications_dir.is_dir(), "应用路径不是目录");
+    ensure!(
+        config.applications_dir.is_dir(),
+        "Applications path is not a directory"
+    );
     let mut apps = Vec::new();
     for entry in fs::read_dir(&config.applications_dir)? {
         let entry = entry?;
@@ -108,11 +190,11 @@ pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
     let header = validate_appimage(path)?;
     ensure!(
         !path.to_string_lossy().chars().any(char::is_control),
-        "应用路径不能包含控制字符"
+        "Application path contains control characters"
     );
     let filename = path
         .file_name()
-        .context("缺少文件名")?
+        .context("Missing filename")?
         .to_string_lossy()
         .into_owned();
     let mut name = filename
@@ -156,23 +238,24 @@ pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
     Ok(AppInfo {
         id: stable_id(&filename),
         name,
-        version: version.unwrap_or_else(|| "未知".into()),
+        version: version.unwrap_or_else(|| "Unknown".into()),
         path: path.to_path_buf(),
         size_bytes: fs::metadata(path)?.len(),
         description: desktop
             .values
             .get("Comment")
             .cloned()
-            .unwrap_or_else(|| "独立的 Linux AppImage 应用".into()),
+            .unwrap_or_else(|| "Standalone Linux AppImage application".into()),
         repository,
         update_info,
+        icon_path: crate::metadata::resolve_icon(path, desktop.path.as_deref()),
         desktop_file: desktop.path,
         architecture: match u16::from_le_bytes([header[18], header[19]]) {
             62 => "x86_64",
             183 => "aarch64",
             3 => "x86",
             40 => "arm",
-            _ => "未知",
+            _ => "Unknown",
         }
         .into(),
     })
@@ -182,7 +265,7 @@ pub fn set_repository(config: &mut Config, app: &AppInfo, repository: &str) -> R
     let key = app
         .path
         .file_name()
-        .context("缺少文件名")?
+        .context("Missing filename")?
         .to_string_lossy()
         .into_owned();
     let mut next = config.clone();
@@ -212,7 +295,7 @@ pub fn normalize_repository(value: &str) -> Result<String> {
                 && *p != ".."
                 && p.chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')),
-        "请填写 GitHub 的 owner/repository 或仓库 HTTPS 地址"
+        "Enter a GitHub owner/repository or repository HTTPS URL"
     );
     Ok(v.into())
 }
@@ -230,7 +313,7 @@ pub fn launch(app: &AppInfo) -> Result<()> {
     ensure!(
         app.architecture == std::env::consts::ARCH
             || (app.architecture == "x86_64" && std::env::consts::ARCH == "x86_64"),
-        "此应用架构与本机不匹配"
+        "Application architecture does not match this machine"
     );
     let mut permissions = fs::metadata(&app.path)?.permissions();
     permissions.set_mode(permissions.mode() | 0o100);
@@ -240,7 +323,7 @@ pub fn launch(app: &AppInfo) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .context("启动应用失败")?;
+        .context("Failed to launch application")?;
     Ok(())
 }
 
@@ -249,11 +332,11 @@ pub fn import_app(config: &Config, source: &Path) -> Result<AppInfo> {
     fs::create_dir_all(&config.applications_dir)?;
     let filename = source
         .file_name()
-        .context("缺少源文件名")?
+        .context("Missing source filename")?
         .to_string_lossy();
     ensure!(
         !filename.chars().any(char::is_control),
-        "文件名不能包含控制字符"
+        "Filename contains control characters"
     );
     let filename = if source
         .extension()
@@ -271,7 +354,7 @@ pub fn import_app(config: &Config, source: &Path) -> Result<AppInfo> {
     }
     ensure!(
         !destination.exists(),
-        "目标目录已有同名应用，请先处理后重试"
+        "An application with the same filename already exists in the destination"
     );
     let mut temp = tempfile::NamedTempFile::new_in(&config.applications_dir)?;
     std::io::copy(&mut File::open(source)?, &mut temp)?;
@@ -299,7 +382,7 @@ pub fn integrate(app: &AppInfo) -> Result<()> {
     fs::create_dir_all(&dir)?;
     ensure!(
         !app.path.to_string_lossy().chars().any(char::is_control),
-        "应用路径不能包含控制字符"
+        "Application path contains control characters"
     );
     if !find_desktops(&app.path)?.is_empty() {
         return Ok(());
@@ -370,7 +453,9 @@ pub fn uninstall(config: &Config, app: &AppInfo) -> Result<PathBuf> {
                         let _ = remove_trash_info(destination);
                     }
                 }
-                return Err(error.context("卸载未完成，已尝试恢复之前移动的文件"));
+                return Err(error.context(
+                    "Uninstall failed; restoration of previously moved files was attempted",
+                ));
             }
         }
     }
@@ -380,7 +465,7 @@ pub fn uninstall(config: &Config, app: &AppInfo) -> Result<PathBuf> {
 fn remove_trash_info(destination: &Path) -> Result<()> {
     let name = destination
         .file_name()
-        .context("缺少回收站文件名")?
+        .context("Missing Trash filename")?
         .to_string_lossy();
     fs::remove_file(
         destination
@@ -397,7 +482,10 @@ fn move_to_trash(path: &Path) -> Result<PathBuf> {
     let trash = user_data_dir()?.join("Trash");
     fs::create_dir_all(trash.join("files"))?;
     fs::create_dir_all(trash.join("info"))?;
-    let filename = path.file_name().context("缺少文件名")?.to_string_lossy();
+    let filename = path
+        .file_name()
+        .context("Missing filename")?
+        .to_string_lossy();
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
     let unique = format!("{filename}.{stamp}");
     let dest = trash.join("files").join(&unique);
@@ -442,37 +530,43 @@ fn move_to_trash(path: &Path) -> Result<PathBuf> {
 pub(crate) fn ensure_managed_path(config: &Config, path: &Path) -> Result<()> {
     ensure!(
         !fs::symlink_metadata(path)?.file_type().is_symlink(),
-        "拒绝操作符号链接"
+        "Refusing to modify a symbolic link"
     );
     let root = config.applications_dir.canonicalize()?;
     let canonical = path.canonicalize()?;
     ensure!(
         canonical.parent() == Some(root.as_path()),
-        "应用不在设置的管理目录中"
+        "Application is outside the configured library"
     );
-    ensure!(fs::metadata(&canonical)?.is_file(), "应用不是普通文件");
+    ensure!(
+        fs::metadata(&canonical)?.is_file(),
+        "Application is not a regular file"
+    );
     Ok(())
 }
 
 pub(crate) fn validate_appimage(path: &Path) -> Result<[u8; 64]> {
     ensure!(
         !fs::symlink_metadata(path)?.file_type().is_symlink(),
-        "拒绝将符号链接作为 AppImage"
+        "Refusing a symbolic link as an AppImage"
     );
-    ensure!(fs::metadata(path)?.is_file(), "AppImage 不是普通文件");
+    ensure!(
+        fs::metadata(path)?.is_file(),
+        "AppImage is not a regular file"
+    );
     let mut header = [0u8; 64];
     File::open(path)?
         .read_exact(&mut header)
-        .context("文件过小，无法识别 AppImage")?;
+        .context("File is too small to be an AppImage")?;
     ensure!(
         &header[..4] == b"\x7fELF" && &header[8..10] == b"AI" && [1, 2].contains(&header[10]),
-        "文件不是有效的 ELF AppImage"
+        "File is not a valid ELF AppImage"
     );
     ensure!(
         header[5] == 1 && [1, 2].contains(&header[4]),
-        "不支持此 ELF 格式"
+        "Unsupported ELF format"
     );
-    ensure!(fs::metadata(path)?.len() > 64, "AppImage 文件不完整");
+    ensure!(fs::metadata(path)?.len() > 64, "Incomplete AppImage file");
     Ok(header)
 }
 fn stable_id(value: &str) -> String {
@@ -749,6 +843,47 @@ mod tests {
         b[18] = 62;
         fs::write(path, b).unwrap();
     }
+
+    #[test]
+    fn preferences_survive_restart_and_legacy_configuration() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(
+            &path,
+            serde_json::json!({"applications_dir":temp.path(),"repositories":{}}).to_string(),
+        )
+        .unwrap();
+        let mut config = Config::load_from(&path).unwrap();
+        assert_eq!(config.window_style, WindowStyle::Gpui);
+        assert_eq!(config.appearance, Appearance::Light);
+        config.appearance = Appearance::Dark;
+        config.language = "de".into();
+        config.window_style = WindowStyle::Gnome;
+        config.window_width = 1040.0;
+        config.window_height = 720.0;
+        config.maximized = true;
+        config.last_selected_path = Some(temp.path().join("Tool.AppImage"));
+        config.directory_draft = Some("/tmp/a draft".into());
+        config
+            .repository_drafts
+            .insert("Tool.AppImage".into(), "owner/project".into());
+        config.save_to(&path).unwrap();
+        let reloaded = Config::load_from(&path).unwrap();
+        assert_eq!(reloaded.appearance, Appearance::Dark);
+        assert_eq!(reloaded.language, "de");
+        assert_eq!(reloaded.window_style, WindowStyle::Gnome);
+        assert_eq!(reloaded.window_width, 1040.0);
+        assert_eq!(reloaded.window_height, 720.0);
+        assert!(reloaded.maximized);
+        assert_eq!(reloaded.last_selected_path, config.last_selected_path);
+        assert_eq!(reloaded.directory_draft, config.directory_draft);
+        assert_eq!(reloaded.repository_drafts, config.repository_drafts);
+        for style in [WindowStyle::Gpui, WindowStyle::Qt, WindowStyle::Gnome] {
+            config.window_style = style;
+            config.save_to(&path).unwrap();
+            assert_eq!(Config::load_from(&path).unwrap().window_style, style);
+        }
+    }
     #[test]
     fn scans_only_valid_images_and_ignores_symlinks() {
         let d = tempfile::tempdir().unwrap();
@@ -762,6 +897,7 @@ mod tests {
         let c = Config {
             applications_dir: d.path().into(),
             repositories: BTreeMap::new(),
+            ..Config::default()
         };
         let list = scan(&c).unwrap();
         assert_eq!(list.len(), 1);
@@ -777,6 +913,7 @@ mod tests {
         let c = Config {
             applications_dir: d.path().into(),
             repositories: BTreeMap::new(),
+            ..Config::default()
         };
         assert!(ensure_managed_path(&c, &file).is_err());
         assert!(file.exists());
@@ -829,6 +966,7 @@ mod tests {
         let config = Config {
             applications_dir: d.path().into(),
             repositories: BTreeMap::new(),
+            ..Config::default()
         };
         assert_eq!(
             inspect(&config, &p).unwrap().repository.as_deref(),
@@ -856,6 +994,7 @@ mod tests {
             let config = Config {
                 applications_dir: d.path().join("apps"),
                 repositories: BTreeMap::new(),
+                ..Config::default()
             };
             let app = import_app(&config, &source).unwrap();
             assert!(source.exists());
@@ -871,6 +1010,7 @@ mod tests {
         let config = Config {
             applications_dir: d.path().join("apps"),
             repositories: BTreeMap::new(),
+            ..Config::default()
         };
         assert!(import_app(&config, &source).is_err());
         assert!(source.exists());
@@ -885,6 +1025,7 @@ mod tests {
             let config = Config {
                 applications_dir: d.path().into(),
                 repositories: BTreeMap::new(),
+                ..Config::default()
             };
             let desktop = applications_desktop_dir().unwrap();
             fs::create_dir_all(&desktop).unwrap();

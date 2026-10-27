@@ -1,10 +1,10 @@
 [package]
 name = "appimage-mannger"
-version = "0.1.0-rc.1"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.98"
 description = "A native Linux AppImage manager built with Ely and GPUI"
-license = "MIT"
+license = "AGPL-3.0-only"
 repository = "https://github.com/xingwangzhe/AppimageMannger"
 authors = ["xingwangzhe <xingwangzhe@outlook.com>"]
 
@@ -25,6 +25,7 @@ object = { version = "0.37", features = ["read"] }
 futures = "0.3"
 env_logger = "0.11"
 log = "0.4"
+regex = "1"
 
 [profile.release]
 opt-level = 3
