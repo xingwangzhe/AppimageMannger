@@ -120,10 +120,10 @@ pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
         .trim_end_matches(".appimage")
         .to_string();
     let mut version = filename_version(&name);
-    if let Some(v) = &version {
-        if let Some(i) = name.find(v) {
-            name = name[..i].trim_end_matches(['-', '_', ' ']).to_string();
-        }
+    if let Some(v) = &version
+        && let Some(i) = name.find(v)
+    {
+        name = name[..i].trim_end_matches(['-', '_', ' ']).to_string();
     }
     if name.is_empty() {
         name = filename.clone();
@@ -521,10 +521,8 @@ fn find_desktops(path: &Path) -> Result<Vec<DesktopMetadata>> {
                 in_entry = line == "[Desktop Entry]";
                 continue;
             }
-            if in_entry {
-                if let Some((k, v)) = line.split_once('=') {
-                    values.insert(k.to_string(), v.to_string());
-                }
+            if in_entry && let Some((k, v)) = line.split_once('=') {
+                values.insert(k.to_string(), v.to_string());
             }
         }
         let matches = values
@@ -805,6 +803,40 @@ mod tests {
         let p = d.path().join("x.AppImage");
         fixture(&p);
         assert_eq!(read_update_info(&p).unwrap(), None);
+    }
+    #[test]
+    fn reads_bounded_elf_update_section_and_discovers_repository() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("SectionFixture-1.2.3.AppImage");
+        fixture(&p);
+        let mut bytes = fs::read(&p).unwrap();
+        bytes.resize(640, 0);
+        bytes[40..48].copy_from_slice(&128u64.to_le_bytes());
+        bytes[58..60].copy_from_slice(&64u16.to_le_bytes());
+        bytes[60..62].copy_from_slice(&3u16.to_le_bytes());
+        bytes[62..64].copy_from_slice(&1u16.to_le_bytes());
+        let names = b"\0.shstrtab\0.upd_info\0";
+        bytes[320..320 + names.len()].copy_from_slice(names);
+        bytes[192..196].copy_from_slice(&1u32.to_le_bytes());
+        bytes[216..224].copy_from_slice(&320u64.to_le_bytes());
+        bytes[224..232].copy_from_slice(&(names.len() as u64).to_le_bytes());
+        bytes[256..260].copy_from_slice(&11u32.to_le_bytes());
+        bytes[280..288].copy_from_slice(&400u64.to_le_bytes());
+        bytes[288..296].copy_from_slice(&128u64.to_le_bytes());
+        let info = b"gh-releases-zsync|owner|repository|latest|Tool-*.AppImage.zsync";
+        bytes[400..400 + info.len()].copy_from_slice(info);
+        fs::write(&p, &bytes).unwrap();
+        let config = Config {
+            applications_dir: d.path().into(),
+            repositories: BTreeMap::new(),
+        };
+        assert_eq!(
+            inspect(&config, &p).unwrap().repository.as_deref(),
+            Some("owner/repository")
+        );
+        bytes[288..296].copy_from_slice(&u64::MAX.to_le_bytes());
+        fs::write(&p, bytes).unwrap();
+        assert!(read_update_info(&p).is_err());
     }
     #[test]
     fn desktop_exec_escapes_field_codes_and_specials() {

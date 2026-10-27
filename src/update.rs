@@ -384,6 +384,21 @@ mod tests {
         assert!(!asset_matches("Tool-x86_64.deb", "x86_64"));
     }
     #[test]
+    fn update_information_glob_selects_only_the_named_application() {
+        assert!(glob_matches(
+            "Tool-*-x86_64.AppImage",
+            "Tool-1.2.3-x86_64.AppImage"
+        ));
+        assert!(!glob_matches(
+            "Tool-*-x86_64.AppImage",
+            "Other-1.2.3-x86_64.AppImage"
+        ));
+        assert!(!glob_matches(
+            "Tool-*-x86_64.AppImage",
+            "Tool-1.2.3-x86_64.AppImage.zsync"
+        ));
+    }
+    #[test]
     fn latest_release_selects_native_stable_asset() {
         let body=serde_json::json!({"tag_name":"v1.3.0","html_url":"https://github.com/a/b/releases/v1.3.0","assets":[{"name":format!("Tool-{}.AppImage",std::env::consts::ARCH),"size":128,"browser_download_url":"https://example.com/a.AppImage","digest":null}]}).to_string();
         let dir = tempfile::tempdir().unwrap();
