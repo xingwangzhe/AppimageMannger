@@ -19,6 +19,7 @@
 - Built and inspected the local amd64 DEB, then upgraded the installed application from 1.0.1 to 1.0.2 with pkexec apt-get. Both dpkg and `/usr/bin/appimage-mannger --version` report 1.0.2. The installed engine matches the tested release binary byte for byte. Local DEB SHA-256: `7e7bfe47d1581b0877c8bb7b437eeb0e67efc15861e067aa8cbd7c6b9b09d5f0`.
 - GPUI About email selection copied the exact address to an external clipboard reader. Its brand image menu produced a valid 256 × 256 PNG through the native clipboard owner. The installed GTK and Qt frontends opened with isolated XDG configuration and an inert fixture library.
 - The installed Qt About GitHub field copied exactly `github.com/xingwangzhe` through keyboard selection and Ctrl+C.
+- A GPUI pointer drag copied the partial address `xingwangzhe@outlook`; SVG icon copy yielded a valid 1024 × 1024 PNG. After a normal quit and a new installed process, language, theme, toolkit, dimensions and selection were preserved. Dragging the installed GTK caption moved the real Wayland window by the requested 120 × 40 pixels.
 - The existing user AppImage's SHA-256 was unchanged after installation and smoke tests.
 - The About screenshot below was captured with GNOME Shell's interactive **Window** screenshot mode through the screenshot portal. It is a complete native window capture, with no desktop cropping or image editing.
 
@@ -37,6 +38,13 @@ Seven alternating samples, after warmup, measured whole CLI process time on Linu
 The separate translation comparison runs 100,000 mixed lookups per sample against the original algorithm. Its latest seven-sample medians were 248.30 ms and 56.44 ms, a 4.40× speedup. It compares lookup algorithms in one release test process; GPUI's additional reuse of the resolved active language is outside that comparison.
 
 Raw measurements, executable digests and workload details: [scan JSON](performance/1.0.2-scan.json), [translation JSON](performance/1.0.2-translation.json). Synthetic fixtures isolate desktop lookup overhead; actual AppImage extraction and cold filesystem costs vary.
+
+## Published release
+
+- Stable [v1.0.2](https://github.com/xingwangzhe/AppimageMannger/releases/tag/v1.0.2) targets commit `c0f5a87138995e23b7289c6d2982dc868ec76a90`.
+- The [tagged workflow](https://github.com/xingwangzhe/AppimageMannger/actions/runs/40471384528) succeeded for x86_64, aarch64 and release assembly. It built all package formats, installed/smoke-tested the packages, validated real pacman packages and published only after required jobs passed.
+- The published release has 16 assets. All 15 entries in its `SHA256SUMS` match the SHA-256 digests supplied by GitHub for the actual assets; the manifest's own downloaded bytes match its GitHub digest as well.
+- AUR source/binary recipe archives are provided alongside real `.pkg.tar.zst` packages. This does not represent submission to the AUR service.
 
 ## Guidance and reproducibility
 
