@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /** Retain project/Rust notices and exact Ubuntu copyrights for redistributed files. */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 
 function run(command: string[], cwd: string): string {
@@ -14,7 +14,7 @@ export function collectProjectLicenses(destination: string, root = resolve(impor
   mkdirSync(destination, { recursive: true });
   put(join(root, "LICENSE"), join(destination, "LICENSE"));
   put(join(root, "Cargo.lock"), join(destination, "Cargo.lock"));
-  put(join(root, "packaging/licenses/ELY-MIT.txt"), join(destination, "ELY-MIT.txt"));
+  cpSync(join(root, "packaging/licenses"), destination, { recursive: true });
   put(join(root, "docs/THIRD-PARTY-NOTICES.md"), join(destination, "THIRD-PARTY-NOTICES.md"));
   const target = run(["rustc", "-vV"], root).match(/^host: (.+)$/m)?.[1];
   if (!target) throw new Error("Cannot determine Rust host target for license inventory");

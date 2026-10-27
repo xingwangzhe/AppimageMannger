@@ -1,0 +1,13 @@
+{
+  "upstream": "https://github.com/ELY-Open-Source/Ely-GPUI-Components",
+  "commit": "30c66fe1d5d23db769a6c834b771d054d7f288cf",
+  "retention": "Original upstream notices are copied verbatim. Asset licenses are independent of Ely's MIT code license and the application's AGPL license.",
+  "files": [
+    {"retained": "IBMPlexSans-OFL.txt", "upstreamPath": "crates/ely-core/assets/plex/IBMPlexSans-LICENSE.txt", "license": "OFL-1.1", "usage": "IBM Plex Sans font is embedded unconditionally by ely-core/src/assets.rs."},
+    {"retained": "Inter-OFL.txt", "upstreamPath": "crates/ely-core/assets/fonts/Inter-LICENSE.txt", "license": "OFL-1.1", "usage": "Retained conservatively for ely-core's fonts feature."},
+    {"retained": "JetBrainsMono-OFL.txt", "upstreamPath": "crates/ely-core/assets/fonts/JetBrainsMono-LICENSE.txt", "license": "OFL-1.1", "usage": "Retained conservatively for ely-core's fonts feature."},
+    {"retained": "Lucide-Feather-LICENSE.txt", "upstreamPath": "crates/ely-core/icons/LICENSE", "license": "ISC AND MIT", "usage": "Lucide icons include derivatives of Feather; both upstream notices are retained."},
+    {"retained": "LanguageTable-Apache-2.0.md", "upstreamPath": "crates/ely-core/src/forms/languages-LICENSE.md", "license": "Apache-2.0", "usage": "The embedded language-name table derives from isolang."}
+  ],
+  "websiteOnly": "Geist, Reicon and Solar attributions belong to Ely's separate website frontend. That frontend is not imported or redistributed by this native application; pinned ely-core uses the Lucide/Feather icons recorded above."
+}
