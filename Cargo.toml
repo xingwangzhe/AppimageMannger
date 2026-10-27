@@ -1,0 +1,31 @@
+[package]
+name = "appimage-mannger"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "A native Linux AppImage manager built with Ely and GPUI"
+license = "MIT"
+repository = "https://github.com/xingwangzhe/AppimageMannger"
+authors = ["xingwangzhe <xingwangzhe@outlook.com>"]
+
+[dependencies]
+ely-core = { git = "https://github.com/ELY-Open-Source/Ely-GPUI-Components", rev = "30c66fe1d5d23db769a6c834b771d054d7f288cf", features = ["platform", "runtime_shaders"] }
+gpui = { package = "gpui-pre", version = "=0.3.10", default-features = false }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = ["font-kit", "wayland", "x11", "runtime_shaders"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+dirs = "6"
+semver = "1"
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3"
+object = { version = "0.37", features = ["read"] }
+futures = "0.3"
+env_logger = "0.11"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
