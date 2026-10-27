@@ -1,6 +1,6 @@
 [package]
 name = "appimage-mannger"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 edition = "2024"
 rust-version = "1.98"
 description = "A native Linux AppImage manager built with Ely and GPUI"
@@ -24,6 +24,7 @@ tempfile = "3"
 object = { version = "0.37", features = ["read"] }
 futures = "0.3"
 env_logger = "0.11"
+log = "0.4"
 
 [profile.release]
 opt-level = 3
