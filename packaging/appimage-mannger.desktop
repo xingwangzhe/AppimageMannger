@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=AppimageMannger
+Name[zh_CN]=AppimageMannger 管理器
+Comment=Manage, launch and update your AppImage applications
+Comment[zh_CN]=管理、启动、卸载和更新 AppImage 应用
+Exec=appimage-mannger
+Icon=appimage-mannger
+Terminal=false
+Categories=System;PackageManager;Utility;
+Keywords=AppImage;Linux;Applications;Updates;
+StartupWMClass=appimage-mannger

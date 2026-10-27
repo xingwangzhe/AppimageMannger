@@ -1,0 +1,144 @@
+name: Linux CI and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish release assets (requires a matching v<version> tag)
+        type: boolean
+        default: false
+      tag:
+        description: Existing release tag, e.g. v0.1.0 (only for publishing)
+        type: string
+        default: ''
+
+env:
+  CARGO_BUILD_JOBS: 2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }} · tests and packages
+    # Latest GA images verified 2026-10-27. -latest was still migrating to 26.04.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-26.04
+          - arch: aarch64
+            runner: ubuntu-26.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install latest stable Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+      - name: Native dependencies and packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config clang cmake libfontconfig-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev libvulkan-dev libssl-dev rpm zstd squashfs-tools file desktop-file-utils xvfb mesa-vulkan-drivers fonts-noto-core
+          rustc --version
+          bun --version
+          ldd --version | head -n 1
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2.9.3
+        with:
+          key: ${{ matrix.arch }}
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Unit and integration tests
+        run: cargo test --release --locked
+      - name: Clippy
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Build native release
+        run: cargo build --release --locked
+      - name: Build deb, rpm, AppImage and portable archive
+        run: bun run scripts/package.ts --formats deb,rpm,appimage,tar --arch '${{ matrix.arch }}'
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Inspect packages and smoke-test installed deb and AppImage
+        run: |
+          dpkg-deb --info dist/*.deb
+          dpkg-deb --contents dist/*.deb
+          rpm -qp --info dist/*.rpm
+          rpm -qp --requires dist/*.rpm
+          sudo apt-get install -y ./dist/*.deb
+          mkdir -p /tmp/appimage-mannger-ci-empty
+          appimage-mannger --version
+          appimage-mannger --smoke-test --directory /tmp/appimage-mannger-ci-empty
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --version
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --smoke-test --directory /tmp/appimage-mannger-ci-empty
+          desktop-file-validate /usr/share/applications/appimage-mannger.desktop
+      - name: Upload native packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Assemble release and AUR recipes
+    needs: linux
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: linux-*
+          merge-multiple: true
+          path: dist
+      - name: Create source archive and AUR packages
+        run: |
+          bun run scripts/package-aur.ts
+          bun run scripts/package-checksums.ts
+          cd dist && sha256sum -c SHA256SUMS
+      - name: Upload complete release bundle
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: complete-linux-release
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || inputs.tag }}
+        run: |
+          version=$(bun -e 'const t=await Bun.file("Cargo.toml").text(); console.log(t.match(/^version\s*=\s*"([^"]+)"/m)[1])')
+          test "$RELEASE_TAG" = "v$version"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          release_flags=()
+          if [[ "$version" == *-* ]]; then release_flags+=(--prerelease); fi
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --title "AppimageMannger $version" --generate-notes "${release_flags[@]}"
+          fi
