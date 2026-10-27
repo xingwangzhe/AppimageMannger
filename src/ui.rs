@@ -163,7 +163,7 @@ impl ManagerView {
                         view.status = message;
                     }
                     Ok(JobResult::Check(check)) => {
-                        view.status = format!("{}", check.status);
+                        view.status = check.status.clone();
                         view.checked = Some(check);
                     }
                     Ok(JobResult::Message(message)) => view.status = message,
@@ -699,7 +699,7 @@ impl ManagerView {
                             .p_3()
                             .rounded_lg()
                             .bg(colors.sunken)
-                            .child(format!("{}", check.status))
+                            .child(check.status.clone())
                             .child(div().text_sm().text_color(colors.fg_muted).child(format!(
                                 "当前 {}  →  最新 {}",
                                 check.current_version, check.latest_version
@@ -1071,7 +1071,7 @@ pub fn run() {
                         ..Default::default()
                     }),
                     window_min_size: Some(size(px(880.), px(580.))),
-                    app_id: Some("io.github.xingwangzhe.AppimageMannger".into()),
+                    app_id: Some("appimage-mannger".into()),
                     ..Default::default()
                 },
                 |window, cx| cx.new(|cx| ManagerView::new(window, cx)),
