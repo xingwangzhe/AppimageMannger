@@ -17,7 +17,7 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --release --locked
 cargo build --release --locked
 bun run scripts/package.ts --formats deb
-pkexec apt-get install -y "$PWD"/dist/appimage-mannger_1.0.2_amd64.deb
+pkexec apt-get install -y "$PWD"/dist/appimage-mannger_1.0.3_amd64.deb
 /usr/bin/appimage-mannger
 ```
 
@@ -43,3 +43,5 @@ AppImage creation resolves an official appimagetool release over HTTPS. CI can s
 The workflow builds x86_64 and aarch64 on native current runners. Source and binary AUR recipes are release artifacts; a real pacman `.pkg.tar.zst` is a separate installable archive. There is no automatic AUR service submission.
 
 When release publication is authorized, commit validated sources, push the branch, and push an exact `v<version>` tag. Required CI jobs run checks, build/package, inspect/install smoke tests, assemble translated documentation/source archives, and verify checksums before publishing. Do not declare success until the workflow and actual release assets are checked. Record verified local/CI results in [the release handoff](RELEASE-1.0.0.md).
+
+For an installation that must match the published binaries, download the matching architecture's DEB from the completed GitHub Release, verify its SHA-256 against `SHA256SUMS` and the GitHub asset digest, then install that downloaded file. Extract it into a temporary directory and compare the installed engine and both native helpers byte for byte. A local build of the same version may have different binary hashes; a matching version or Git tag alone does not establish binary identity.

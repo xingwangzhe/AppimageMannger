@@ -1,6 +1,6 @@
 [package]
 name = "appimage-mannger"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2024"
 rust-version = "1.98"
 description = "A native Linux AppImage manager built with Ely and GPUI"

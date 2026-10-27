@@ -183,7 +183,7 @@ for(const [locale] of locales){
   '### GNOME / GTK 4 / libadwaita','![GNOME / GTK 4 — English interface](docs/images/gnome-en.png)',
   `## ${text.features}`,text.bullets.map(b=>'- '+b).join('\n'),
   sections.slice(0,licenseAt),`## ${text.develop}`,
-  '[BUILD-AND-RELEASE](docs/BUILD-AND-RELEASE.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [i18n](docs/i18n/COVERAGE.md) · [1.0.2](docs/RELEASE-1.0.2.md) · [THIRD-PARTY-NOTICES](docs/THIRD-PARTY-NOTICES.md)',
+  '[BUILD-AND-RELEASE](docs/BUILD-AND-RELEASE.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [i18n](docs/i18n/COVERAGE.md) · [1.0.3](docs/RELEASE-1.0.3.md) · [THIRD-PARTY-NOTICES](docs/THIRD-PARTY-NOTICES.md)',
   commands, sections.slice(licenseAt).trim(),
   'AGPL-3.0-only © 2026 [xingwangzhe](https://github.com/xingwangzhe) · [xingwangzhe@outlook.com](mailto:xingwangzhe@outlook.com) · [xingwangzhe.fun](https://xingwangzhe.fun) · [LICENSE](LICENSE)'];
  writeFileSync(file(locale),content.join('\n\n')+'\n');
