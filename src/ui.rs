@@ -53,7 +53,7 @@ struct ManagerView {
 impl ManagerView {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let loaded = Config::load();
-        let (config, status, error) = match loaded {
+        let (config, mut status, mut error) = match loaded {
             Ok(c) => (c, "准备就绪".to_owned(), false),
             Err(e) => (Config::default(), format!("配置读取失败：{e:#}"), true),
         };
@@ -84,7 +84,8 @@ impl ManagerView {
         let apps = match manager::scan(&config) {
             Ok(apps) => apps,
             Err(e) => {
-                log::error!("Initial scan: {e:#}");
+                status = format!("扫描失败：{e:#}");
+                error = true;
                 Vec::new()
             }
         };

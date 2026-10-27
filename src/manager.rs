@@ -1,0 +1,887 @@
+//! Filesystem operations never execute an AppImage while inspecting it.
+use anyhow::{Context, Result, ensure};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    collections::BTreeMap,
+    fs::{self, File, OpenOptions},
+    io::{Read, Seek, SeekFrom, Write},
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    path::{Path, PathBuf},
+    process::{Command, Stdio},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Config {
+    pub applications_dir: PathBuf,
+    #[serde(default)]
+    pub repositories: BTreeMap<String, String>,
+}
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            applications_dir: dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("Applications"),
+            repositories: BTreeMap::new(),
+        }
+    }
+}
+impl Config {
+    pub fn load() -> Result<Self> {
+        let path = config_path()?;
+        if !path.exists() {
+            return Ok(Self::default());
+        }
+        let config: Self = serde_json::from_slice(&fs::read(path)?)?;
+        ensure!(
+            config.applications_dir.is_absolute(),
+            "应用目录必须是绝对路径"
+        );
+        Ok(config)
+    }
+    pub fn save(&self) -> Result<()> {
+        ensure!(
+            self.applications_dir.is_absolute(),
+            "应用目录必须是绝对路径"
+        );
+        let path = config_path()?;
+        fs::create_dir_all(path.parent().unwrap())?;
+        let mut tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+        tmp.write_all(&serde_json::to_vec_pretty(self)?)?;
+        tmp.as_file().sync_all()?;
+        tmp.persist(path).map_err(|e| e.error)?;
+        Ok(())
+    }
+}
+fn config_path() -> Result<PathBuf> {
+    Ok(dirs::config_dir()
+        .context("无法确定配置目录")?
+        .join("appimage-mannger/config.json"))
+}
+fn applications_desktop_dir() -> Result<PathBuf> {
+    Ok(user_data_dir()?.join("applications"))
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppInfo {
+    pub id: String,
+    pub name: String,
+    pub version: String,
+    pub path: PathBuf,
+    pub size_bytes: u64,
+    pub description: String,
+    pub repository: Option<String>,
+    pub update_info: Option<String>,
+    pub desktop_file: Option<PathBuf>,
+    pub architecture: String,
+}
+
+pub fn scan(config: &Config) -> Result<Vec<AppInfo>> {
+    if !config.applications_dir.exists() {
+        return Ok(vec![]);
+    }
+    ensure!(config.applications_dir.is_dir(), "应用路径不是目录");
+    let mut apps = Vec::new();
+    for entry in fs::read_dir(&config.applications_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_symlink() || !entry.file_type()?.is_file() {
+            continue;
+        }
+        if path
+            .extension()
+            .is_none_or(|e| !e.eq_ignore_ascii_case("AppImage"))
+        {
+            continue;
+        }
+        if let Ok(app) = inspect(config, &path) {
+            apps.push(app);
+        }
+    }
+    apps.sort_by_key(|a| a.name.to_lowercase());
+    Ok(apps)
+}
+
+pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
+    let header = validate_appimage(path)?;
+    ensure!(
+        !path.to_string_lossy().chars().any(char::is_control),
+        "应用路径不能包含控制字符"
+    );
+    let filename = path
+        .file_name()
+        .context("缺少文件名")?
+        .to_string_lossy()
+        .into_owned();
+    let mut name = filename
+        .trim_end_matches(".AppImage")
+        .trim_end_matches(".appimage")
+        .to_string();
+    let mut version = filename_version(&name);
+    if let Some(v) = &version {
+        if let Some(i) = name.find(v) {
+            name = name[..i].trim_end_matches(['-', '_', ' ']).to_string();
+        }
+    }
+    if name.is_empty() {
+        name = filename.clone();
+    }
+    let desktop = find_desktop(path).unwrap_or_default();
+    if let Some(v) = desktop.values.get("Name") {
+        name = v.clone();
+    }
+    if version.is_none() {
+        version = desktop.values.get("X-AppImage-Version").cloned();
+    }
+    let update_info = read_update_info(path)
+        .ok()
+        .flatten()
+        .or_else(|| desktop.values.get("X-AppImage-UpdateInformation").cloned());
+    if let Ok(Some(installed)) = installed_version(path, &stable_id(&filename)) {
+        version = Some(installed);
+    }
+    let repository = config
+        .repositories
+        .get(&filename)
+        .cloned()
+        .or_else(|| update_info.as_deref().and_then(repository_from_update_info))
+        .or_else(|| {
+            desktop
+                .values
+                .get("X-GitHub-Repository")
+                .and_then(|s| normalize_repository(s).ok())
+        });
+    Ok(AppInfo {
+        id: stable_id(&filename),
+        name,
+        version: version.unwrap_or_else(|| "未知".into()),
+        path: path.to_path_buf(),
+        size_bytes: fs::metadata(path)?.len(),
+        description: desktop
+            .values
+            .get("Comment")
+            .cloned()
+            .unwrap_or_else(|| "独立的 Linux AppImage 应用".into()),
+        repository,
+        update_info,
+        desktop_file: desktop.path,
+        architecture: match u16::from_le_bytes([header[18], header[19]]) {
+            62 => "x86_64",
+            183 => "aarch64",
+            3 => "x86",
+            40 => "arm",
+            _ => "未知",
+        }
+        .into(),
+    })
+}
+
+pub fn set_repository(config: &mut Config, app: &AppInfo, repository: &str) -> Result<()> {
+    let key = app
+        .path
+        .file_name()
+        .context("缺少文件名")?
+        .to_string_lossy()
+        .into_owned();
+    let mut next = config.clone();
+    if repository.trim().is_empty() {
+        next.repositories.remove(&key);
+    } else {
+        next.repositories
+            .insert(key, normalize_repository(repository)?);
+    }
+    next.save()?;
+    *config = next;
+    Ok(())
+}
+
+pub fn normalize_repository(value: &str) -> Result<String> {
+    let v = value
+        .trim()
+        .trim_end_matches('/')
+        .strip_suffix(".git")
+        .unwrap_or(value.trim().trim_end_matches('/'));
+    let v = v.strip_prefix("https://github.com/").unwrap_or(v);
+    let parts: Vec<_> = v.split('/').collect();
+    ensure!(
+        parts.len() == 2
+            && parts.iter().all(|p| !p.is_empty()
+                && *p != "."
+                && *p != ".."
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')),
+        "请填写 GitHub 的 owner/repository 或仓库 HTTPS 地址"
+    );
+    Ok(v.into())
+}
+fn repository_from_update_info(value: &str) -> Option<String> {
+    let p: Vec<_> = value.split('|').collect();
+    if p.len() >= 5 && p[0] == "gh-releases-zsync" {
+        normalize_repository(&format!("{}/{}", p[1], p[2])).ok()
+    } else {
+        None
+    }
+}
+
+pub fn launch(app: &AppInfo) -> Result<()> {
+    validate_appimage(&app.path)?;
+    ensure!(
+        app.architecture == std::env::consts::ARCH
+            || (app.architecture == "x86_64" && std::env::consts::ARCH == "x86_64"),
+        "此应用架构与本机不匹配"
+    );
+    let mut permissions = fs::metadata(&app.path)?.permissions();
+    permissions.set_mode(permissions.mode() | 0o100);
+    fs::set_permissions(&app.path, permissions)?;
+    Command::new(&app.path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("启动应用失败")?;
+    Ok(())
+}
+
+pub fn import_app(config: &Config, source: &Path) -> Result<AppInfo> {
+    validate_appimage(source)?;
+    fs::create_dir_all(&config.applications_dir)?;
+    let filename = source
+        .file_name()
+        .context("缺少源文件名")?
+        .to_string_lossy();
+    ensure!(
+        !filename.chars().any(char::is_control),
+        "文件名不能包含控制字符"
+    );
+    let filename = if source
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("AppImage"))
+    {
+        filename.into_owned()
+    } else {
+        format!("{filename}.AppImage")
+    };
+    let destination = config.applications_dir.join(filename);
+    if source.canonicalize()? == destination.canonicalize().unwrap_or(destination.clone()) {
+        let app = inspect(config, &destination)?;
+        integrate(&app)?;
+        return Ok(app);
+    }
+    ensure!(
+        !destination.exists(),
+        "目标目录已有同名应用，请先处理后重试"
+    );
+    let mut temp = tempfile::NamedTempFile::new_in(&config.applications_dir)?;
+    std::io::copy(&mut File::open(source)?, &mut temp)?;
+    temp.as_file()
+        .set_permissions(fs::Permissions::from_mode(0o755))?;
+    temp.as_file().sync_all()?;
+    validate_appimage(temp.path())?;
+    temp.persist_noclobber(&destination).map_err(|e| e.error)?;
+    let app = inspect(config, &destination)?;
+    if let Err(error) = integrate(&app) {
+        fs::remove_file(destination)?;
+        return Err(error);
+    }
+    inspect(config, &app.path)
+}
+
+/// Install our own desktop entry without changing entries owned by other tools.
+pub fn integrate_app(config: &Config, app: &AppInfo) -> Result<()> {
+    ensure_managed_path(config, &app.path)?;
+    integrate(app)
+}
+
+pub fn integrate(app: &AppInfo) -> Result<()> {
+    let dir = applications_desktop_dir()?;
+    fs::create_dir_all(&dir)?;
+    ensure!(
+        !app.path.to_string_lossy().chars().any(char::is_control),
+        "应用路径不能包含控制字符"
+    );
+    if !find_desktops(&app.path)?.is_empty() {
+        return Ok(());
+    }
+    let path = dir.join(format!("appimage-mannger-{}.desktop", app.id));
+    let icon = app
+        .desktop_file
+        .as_ref()
+        .and_then(|p| fs::read_to_string(p).ok())
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("Icon=").map(str::to_owned))
+        })
+        .unwrap_or_else(|| "application-x-executable".into());
+    let content = format!(
+        "[Desktop Entry]\nType=Application\nName={}\nComment={}\nExec={}\nTryExec={}\nIcon={}\nTerminal=false\nCategories=Utility;\nX-AppimageMannger-Managed=true\n",
+        desktop_value(&app.name),
+        desktop_value(&app.description),
+        desktop_exec(&app.path),
+        desktop_value(&app.path.to_string_lossy()),
+        desktop_value(&icon)
+    );
+    fs::write(path, content)?;
+    refresh_desktop_database();
+    Ok(())
+}
+fn desktop_value(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "")
+}
+fn desktop_exec(path: &Path) -> String {
+    let quoted = path
+        .to_string_lossy()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('`', "\\`")
+        .replace('$', "\\$")
+        .replace('%', "%%");
+    // Desktop strings are unescaped once before Exec argument unquoting.
+    format!("\"{}\"", desktop_value(&quoted))
+}
+fn refresh_desktop_database() {
+    if let Ok(dir) = applications_desktop_dir() {
+        let _ = Command::new("update-desktop-database")
+            .arg(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+}
+
+pub fn uninstall(config: &Config, app: &AppInfo) -> Result<PathBuf> {
+    ensure_managed_path(config, &app.path)?;
+    validate_appimage(&app.path)?;
+    let mut paths: Vec<PathBuf> = find_desktops(&app.path)?
+        .into_iter()
+        .filter_map(|d| d.path)
+        .collect();
+    paths.push(app.path.clone());
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for original in paths {
+        match move_to_trash(&original) {
+            Ok(destination) => moved.push((original, destination)),
+            Err(error) => {
+                for (original, destination) in moved.iter().rev() {
+                    if fs::rename(destination, original).is_ok() {
+                        let _ = remove_trash_info(destination);
+                    }
+                }
+                return Err(error.context("卸载未完成，已尝试恢复之前移动的文件"));
+            }
+        }
+    }
+    refresh_desktop_database();
+    Ok(moved.last().unwrap().1.clone())
+}
+fn remove_trash_info(destination: &Path) -> Result<()> {
+    let name = destination
+        .file_name()
+        .context("缺少回收站文件名")?
+        .to_string_lossy();
+    fs::remove_file(
+        destination
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("info")
+            .join(format!("{name}.trashinfo")),
+    )?;
+    Ok(())
+}
+fn move_to_trash(path: &Path) -> Result<PathBuf> {
+    let trash = user_data_dir()?.join("Trash");
+    fs::create_dir_all(trash.join("files"))?;
+    fs::create_dir_all(trash.join("info"))?;
+    let filename = path.file_name().context("缺少文件名")?.to_string_lossy();
+    let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let unique = format!("{filename}.{stamp}");
+    let dest = trash.join("files").join(&unique);
+    let info = trash.join("info").join(format!("{unique}.trashinfo"));
+    let content = format!(
+        "[Trash Info]\nPath={}\nDeletionDate={}\n",
+        percent_encode_path(&path.canonicalize()?),
+        trash_date()
+    );
+    let mut f = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&info)?;
+    f.write_all(content.as_bytes())?;
+    f.sync_all()?;
+    if let Err(error) = fs::rename(path, &dest) {
+        if error.raw_os_error() != Some(18) {
+            let _ = fs::remove_file(info);
+            return Err(error.into());
+        }
+        let copied = (|| -> Result<()> {
+            let mut out = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o700)
+                .open(&dest)?;
+            std::io::copy(&mut File::open(path)?, &mut out)?;
+            out.sync_all()?;
+            fs::remove_file(path)?;
+            Ok(())
+        })();
+        if let Err(error) = copied {
+            let _ = fs::remove_file(&dest);
+            let _ = fs::remove_file(info);
+            return Err(error);
+        }
+    }
+    Ok(dest)
+}
+
+pub(crate) fn ensure_managed_path(config: &Config, path: &Path) -> Result<()> {
+    ensure!(
+        !fs::symlink_metadata(path)?.file_type().is_symlink(),
+        "拒绝操作符号链接"
+    );
+    let root = config.applications_dir.canonicalize()?;
+    let canonical = path.canonicalize()?;
+    ensure!(
+        canonical.parent() == Some(root.as_path()),
+        "应用不在设置的管理目录中"
+    );
+    ensure!(fs::metadata(&canonical)?.is_file(), "应用不是普通文件");
+    Ok(())
+}
+
+pub(crate) fn validate_appimage(path: &Path) -> Result<[u8; 64]> {
+    ensure!(
+        !fs::symlink_metadata(path)?.file_type().is_symlink(),
+        "拒绝将符号链接作为 AppImage"
+    );
+    ensure!(fs::metadata(path)?.is_file(), "AppImage 不是普通文件");
+    let mut header = [0u8; 64];
+    File::open(path)?
+        .read_exact(&mut header)
+        .context("文件过小，无法识别 AppImage")?;
+    ensure!(
+        &header[..4] == b"\x7fELF" && &header[8..10] == b"AI" && [1, 2].contains(&header[10]),
+        "文件不是有效的 ELF AppImage"
+    );
+    ensure!(
+        header[5] == 1 && [1, 2].contains(&header[4]),
+        "不支持此 ELF 格式"
+    );
+    ensure!(fs::metadata(path)?.len() > 64, "AppImage 文件不完整");
+    Ok(header)
+}
+fn stable_id(value: &str) -> String {
+    hex::encode(Sha256::digest(value.as_bytes()))[..20].into()
+}
+fn filename_version(name: &str) -> Option<String> {
+    name.split(['-', '_', ' ']).find_map(|part| {
+        let v = part.trim_start_matches('v');
+        if semver::Version::parse(v).is_ok() {
+            Some(v.to_string())
+        } else {
+            None
+        }
+    })
+}
+#[derive(Default)]
+struct DesktopMetadata {
+    path: Option<PathBuf>,
+    values: BTreeMap<String, String>,
+}
+fn find_desktop(path: &Path) -> Result<DesktopMetadata> {
+    Ok(find_desktops(path)?.into_iter().next().unwrap_or_default())
+}
+fn find_desktops(path: &Path) -> Result<Vec<DesktopMetadata>> {
+    let dir = applications_desktop_dir()?;
+    if !dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut found = Vec::new();
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() || entry.path().extension().is_none_or(|e| e != "desktop")
+        {
+            continue;
+        }
+        if entry.metadata()?.len() > 128 * 1024 {
+            continue;
+        }
+        let Ok(s) = fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let mut values = BTreeMap::new();
+        let mut in_entry = false;
+        for line in s.lines() {
+            if line.starts_with('[') {
+                in_entry = line == "[Desktop Entry]";
+                continue;
+            }
+            if in_entry {
+                if let Some((k, v)) = line.split_once('=') {
+                    values.insert(k.to_string(), v.to_string());
+                }
+            }
+        }
+        let matches = values
+            .get("TryExec")
+            .is_some_and(|v| v.trim_matches('"') == path.to_string_lossy())
+            || values
+                .get("Exec")
+                .is_some_and(|v| desktop_exec_matches(v, path));
+        if matches {
+            found.push(DesktopMetadata {
+                path: Some(entry.path()),
+                values,
+            });
+        }
+    }
+    Ok(found)
+}
+fn desktop_exec_matches(value: &str, path: &Path) -> bool {
+    [desktop_exec(path), path.to_string_lossy().to_string()]
+        .iter()
+        .any(|p| {
+            value.strip_prefix(p).is_some_and(|rest| {
+                rest.is_empty()
+                    || rest.starts_with(' ')
+                        && rest
+                            .split_whitespace()
+                            .all(|a| ["%f", "%F", "%u", "%U"].contains(&a))
+            })
+        })
+}
+
+/// Read a bounded ELF section; no subprocess and no AppImage execution.
+pub fn read_update_info(path: &Path) -> Result<Option<String>> {
+    let header = validate_appimage(path)?;
+    let mut file = File::open(path)?;
+    let length = file.metadata()?.len();
+    let u16_at = |b: &[u8], i| u16::from_le_bytes([b[i], b[i + 1]]) as u64;
+    let u32_at = |b: &[u8], i| u32::from_le_bytes(b[i..i + 4].try_into().unwrap()) as u64;
+    let u64_at = |b: &[u8], i| u64::from_le_bytes(b[i..i + 8].try_into().unwrap());
+    let is64 = header[4] == 2;
+    let (offset, entry_size, count, string_index) = if is64 {
+        (
+            u64_at(&header, 40),
+            u16_at(&header, 58),
+            u16_at(&header, 60),
+            u16_at(&header, 62),
+        )
+    } else {
+        (
+            u32_at(&header, 32),
+            u16_at(&header, 46),
+            u16_at(&header, 48),
+            u16_at(&header, 50),
+        )
+    };
+    if offset == 0 || count == 0 {
+        return Ok(None);
+    }
+    ensure!(
+        entry_size >= if is64 { 64 } else { 40 }
+            && entry_size <= 256
+            && count <= 4096
+            && string_index < count,
+        "无效的 ELF 节表"
+    );
+    ensure!(
+        offset
+            .checked_add(entry_size * count)
+            .is_some_and(|v| v <= length),
+        "ELF 节表超出文件"
+    );
+    let mut table = vec![0u8; (entry_size * count) as usize];
+    file.seek(SeekFrom::Start(offset))?;
+    file.read_exact(&mut table)?;
+    let section_range = |index: u64| {
+        let s = &table[(index * entry_size) as usize..((index + 1) * entry_size) as usize];
+        if is64 {
+            (u64_at(s, 24), u64_at(s, 32))
+        } else {
+            (u32_at(s, 16), u32_at(s, 20))
+        }
+    };
+    let (strings_offset, strings_size) = section_range(string_index);
+    ensure!(
+        strings_size <= 1024 * 1024
+            && strings_offset
+                .checked_add(strings_size)
+                .is_some_and(|v| v <= length),
+        "ELF 节名表无效"
+    );
+    let mut strings = vec![0; strings_size as usize];
+    file.seek(SeekFrom::Start(strings_offset))?;
+    file.read_exact(&mut strings)?;
+    for i in 0..count {
+        let s = &table[(i * entry_size) as usize..];
+        let name_offset = u32_at(s, 0) as usize;
+        if name_offset >= strings.len() {
+            continue;
+        }
+        let name = &strings[name_offset..];
+        let end = name.iter().position(|c| *c == 0).unwrap_or(name.len());
+        if &name[..end] == b".upd_info" {
+            let (start, size) = section_range(i);
+            ensure!(
+                size <= 64 * 1024 && start.checked_add(size).is_some_and(|v| v <= length),
+                "更新信息节无效"
+            );
+            let mut data = vec![0; size as usize];
+            file.seek(SeekFrom::Start(start))?;
+            file.read_exact(&mut data)?;
+            let s = String::from_utf8_lossy(&data)
+                .trim_matches('\0')
+                .trim()
+                .to_string();
+            return Ok(if s.is_empty() { None } else { Some(s) });
+        }
+    }
+    Ok(None)
+}
+pub(crate) fn user_data_dir() -> Result<PathBuf> {
+    #[cfg(test)]
+    if let Some(p) = TEST_DATA_DIR.with(|p| p.borrow().clone()) {
+        return Ok(p);
+    }
+    dirs::data_dir().context("无法确定用户数据目录")
+}
+#[cfg(test)]
+thread_local! {static TEST_DATA_DIR:std::cell::RefCell<Option<PathBuf>>=const{std::cell::RefCell::new(None)};}
+#[cfg(test)]
+pub(crate) fn with_test_data<T>(path: &Path, f: impl FnOnce() -> T) -> T {
+    TEST_DATA_DIR.with(|p| *p.borrow_mut() = Some(path.to_path_buf()));
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_DATA_DIR.with(|p| *p.borrow_mut() = None);
+        }
+    }
+    let _reset = Reset;
+    f()
+}
+#[derive(Serialize, Deserialize)]
+struct InstalledVersion {
+    path: PathBuf,
+    version: String,
+    sha256: String,
+    size: u64,
+    modified_nanos: u128,
+}
+fn version_record_path(id: &str) -> Result<PathBuf> {
+    Ok(user_data_dir()?
+        .join("appimage-mannger/installed")
+        .join(format!("{id}.json")))
+}
+fn modified_nanos(path: &Path) -> Result<u128> {
+    Ok(fs::metadata(path)?
+        .modified()?
+        .duration_since(UNIX_EPOCH)?
+        .as_nanos())
+}
+fn installed_version(path: &Path, id: &str) -> Result<Option<String>> {
+    let record = version_record_path(id)?;
+    if !record.exists() {
+        return Ok(None);
+    }
+    let r: InstalledVersion = serde_json::from_slice(&fs::read(record)?)?;
+    Ok(
+        if r.path == path
+            && r.size == fs::metadata(path)?.len()
+            && r.modified_nanos == modified_nanos(path)?
+        {
+            Some(r.version)
+        } else {
+            None
+        },
+    )
+}
+pub(crate) fn save_installed_version(app: &AppInfo, sha256: &str) -> Result<()> {
+    let p = version_record_path(&app.id)?;
+    fs::create_dir_all(p.parent().unwrap())?;
+    let r = InstalledVersion {
+        path: app.path.clone(),
+        version: app.version.clone(),
+        sha256: sha256.into(),
+        size: fs::metadata(&app.path)?.len(),
+        modified_nanos: modified_nanos(&app.path)?,
+    };
+    let mut temp = tempfile::NamedTempFile::new_in(p.parent().unwrap())?;
+    temp.write_all(&serde_json::to_vec_pretty(&r)?)?;
+    temp.as_file().sync_all()?;
+    temp.persist(p).map_err(|e| e.error)?;
+    Ok(())
+}
+fn percent_encode_path(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str()
+        .as_bytes()
+        .iter()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"/-_.~".contains(b) {
+                (*b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+fn trash_date() -> String {
+    let out = Command::new("date").arg("+%Y-%m-%dT%H:%M:%S").output();
+    out.ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|| "1970-01-01T00:00:00".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    pub(super) fn fixture(path: &Path) {
+        let mut b = vec![0u8; 128];
+        b[..4].copy_from_slice(b"\x7fELF");
+        b[4] = 2;
+        b[5] = 1;
+        b[8..11].copy_from_slice(b"AI\x02");
+        b[18] = 62;
+        fs::write(path, b).unwrap();
+    }
+    #[test]
+    fn scans_only_valid_images_and_ignores_symlinks() {
+        let d = tempfile::tempdir().unwrap();
+        fixture(&d.path().join("Example-1.2.3.AppImage"));
+        fs::write(d.path().join("Bad.AppImage"), "not an image").unwrap();
+        std::os::unix::fs::symlink(
+            d.path().join("Example-1.2.3.AppImage"),
+            d.path().join("Link.AppImage"),
+        )
+        .unwrap();
+        let c = Config {
+            applications_dir: d.path().into(),
+            repositories: BTreeMap::new(),
+        };
+        let list = scan(&c).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].version, "1.2.3");
+        assert_eq!(list[0].name, "Example");
+    }
+    #[test]
+    fn rejects_outside_managed_root() {
+        let d = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let file = other.path().join("x.AppImage");
+        fixture(&file);
+        let c = Config {
+            applications_dir: d.path().into(),
+            repositories: BTreeMap::new(),
+        };
+        assert!(ensure_managed_path(&c, &file).is_err());
+        assert!(file.exists());
+    }
+    #[test]
+    fn normalizes_only_valid_github_repositories() {
+        assert_eq!(
+            normalize_repository("https://github.com/owner/repo.git").unwrap(),
+            "owner/repo"
+        );
+        for bad in [
+            "https://evil.test/x/y",
+            "../repo",
+            "owner/repo/releases",
+            "owner/repo?token=abc",
+            "",
+        ] {
+            assert!(normalize_repository(bad).is_err(), "{bad}");
+        }
+    }
+    #[test]
+    fn reads_empty_update_info_without_execution() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("x.AppImage");
+        fixture(&p);
+        assert_eq!(read_update_info(&p).unwrap(), None);
+    }
+    #[test]
+    fn desktop_exec_escapes_field_codes_and_specials() {
+        let s = desktop_exec(Path::new("/tmp/a %f $x`\".AppImage"));
+        assert!(s.contains("%%f"));
+        assert!(s.contains("\\$"));
+        assert!(s.contains("\\`"));
+    }
+
+    #[test]
+    fn imports_other_extensions_with_image_suffix_and_keeps_source() {
+        let d = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        with_test_data(data.path(), || {
+            let source = d.path().join("Tool-1.2.3.bin");
+            fixture(&source);
+            let config = Config {
+                applications_dir: d.path().join("apps"),
+                repositories: BTreeMap::new(),
+            };
+            let app = import_app(&config, &source).unwrap();
+            assert!(source.exists());
+            assert!(app.path.to_string_lossy().ends_with(".bin.AppImage"));
+            assert_eq!(scan(&config).unwrap().len(), 1);
+        });
+    }
+    #[test]
+    fn rejects_filename_control_characters() {
+        let d = tempfile::tempdir().unwrap();
+        let source = d.path().join("Tool\nExec=bad.AppImage");
+        fixture(&source);
+        let config = Config {
+            applications_dir: d.path().join("apps"),
+            repositories: BTreeMap::new(),
+        };
+        assert!(import_app(&config, &source).is_err());
+        assert!(source.exists());
+    }
+    #[test]
+    fn reuses_existing_launcher_and_trashes_all_launchers_with_restore_metadata() {
+        let d = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        with_test_data(data.path(), || {
+            let source = d.path().join("Tool-1.2.3.AppImage");
+            fixture(&source);
+            let config = Config {
+                applications_dir: d.path().into(),
+                repositories: BTreeMap::new(),
+            };
+            let desktop = applications_desktop_dir().unwrap();
+            fs::create_dir_all(&desktop).unwrap();
+            let legacy = desktop.join("legacy.desktop");
+            fs::write(
+                &legacy,
+                format!(
+                    "[Desktop Entry]\nName=Tool\nExec={} %U\nIcon=old-icon\n",
+                    source.display()
+                ),
+            )
+            .unwrap();
+            let app = inspect(&config, &source).unwrap();
+            integrate(&app).unwrap();
+            assert_eq!(fs::read_dir(&desktop).unwrap().count(), 1);
+            let second = desktop.join("duplicate.desktop");
+            fs::write(
+                &second,
+                format!("[Desktop Entry]\nName=Tool\nTryExec={}\n", source.display()),
+            )
+            .unwrap();
+            let destination = uninstall(&config, &app).unwrap();
+            assert!(!source.exists());
+            assert!(destination.exists());
+            assert!(!legacy.exists());
+            assert!(!second.exists());
+            let info = data.path().join("Trash/info");
+            assert_eq!(fs::read_dir(info).unwrap().count(), 3);
+            assert_eq!(fs::read(&destination).unwrap().len(), 128);
+        });
+    }
+}
