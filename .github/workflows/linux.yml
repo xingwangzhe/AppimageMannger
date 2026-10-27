@@ -12,7 +12,7 @@ on:
         type: boolean
         default: false
       tag:
-        description: Existing release tag, e.g. v0.1.0 (only for publishing)
+        description: Existing release tag, e.g. v1.0.0 (only for publishing)
         type: string
         default: ''
 
@@ -54,7 +54,7 @@ jobs:
       - name: Native dependencies and packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config clang cmake libfontconfig-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev libvulkan-dev libssl-dev rpm zstd squashfs-tools libarchive-tools pacman-package-manager makepkg file desktop-file-utils xvfb mesa-vulkan-drivers fonts-noto-core
+          sudo apt-get install -y build-essential pkg-config clang cmake libfontconfig-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev libvulkan-dev libssl-dev qt6-base-dev qt6-qpa-plugins qt6-wayland libgtk-4-dev libadwaita-1-dev libjson-glib-dev libgdk-pixbuf-2.0-dev libglib2.0-bin dbus-x11 dconf-gsettings-backend gsettings-desktop-schemas rpm zstd squashfs-tools libarchive-tools pacman-package-manager makepkg file desktop-file-utils xvfb mesa-vulkan-drivers fonts-noto-core
           rustc --version
           bun --version
           ldd --version | head -n 1
@@ -63,6 +63,8 @@ jobs:
         with:
           key: ${{ matrix.arch }}
           cache-on-failure: true
+      - name: Validate 26-language catalogs and QuickStart guides
+        run: bun run scripts/check-i18n.ts
       - name: Format
         run: cargo fmt --all --check
       - name: Clippy
@@ -88,6 +90,13 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --version
           APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --smoke-test --directory /tmp/appimage-mannger-ci-empty
           desktop-file-validate /usr/share/applications/appimage-mannger.desktop
+          test -x /usr/lib/appimage-mannger/frontend-qt
+          test -x /usr/lib/appimage-mannger/frontend-gnome
+          for frontend in qt gnome; do
+            result=0
+            xvfb-run -a dbus-run-session -- env QT_QPA_PLATFORM=xcb GDK_BACKEND=x11 GSK_RENDERER=cairo APPIMAGE_MAN_NGER_ENGINE=/usr/bin/appimage-mannger timeout 5 /usr/lib/appimage-mannger/frontend-"$frontend" || result=$?
+            test "$result" = 124
+          done
       - name: Validate real pacman binary package metadata and file list
         run: |
           mkdir -p /tmp/appimage-mannger-pacman-db

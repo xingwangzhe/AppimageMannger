@@ -94,3 +94,60 @@ an ARM Arch container install test is not claimed.
 
 Arch versions use `0.1.0rc1` for `0.1.0-rc.1`: verified using libalpm vercmp
 to sort before `0.1.0`, so a stable release upgrades naturally.
+
+## Native Qt and GTK frontends
+
+Every package includes `/usr/lib/appimage-mannger/frontend-qt` and
+`frontend-gnome` exported by the matching Rust engine. Packaging refuses
+to continue if either helper is missing. DEB dependencies are computed across
+all three ELF executables and additionally require the Qt XCB/Wayland plugins.
+RPM includes the helper directory and uses automatic ELF requirements.
+Arch and AUR runtime dependencies include Qt6 Base/Wayland, GTK4, libadwaita and
+JSON-GLib; AUR source recipes export helpers after compilation and the binary
+recipe installs the helpers from the native portable archive.
+
+AppImages additionally bundle the three ELF dependency graphs, Qt platform and
+image plugins, Wayland/XCB integrations, GSettings schemas, Dconf/GIO and
+GdkPixbuf image loaders, Adwaita icons, shared MIME data, the Vulkan loader and
+unsquashfs. A relocatable AppRun sets their lookup paths and creates then removes
+a temporary image-loader cache. Host libc, fonts and GPU drivers remain external.
+
+For a fully offline local AppDir assembly/inspection, without contacting GitHub:
+
+```sh
+bun run scripts/package.ts --formats deb,appdir
+```
+
+`--work-dir PATH` can isolate packaging verification from another local build.
+CI configuration installs the native development libraries and starts both
+installed helpers under Xvfb as an additional toolkit startup check.
+
+## License retention and source traceability
+
+Project metadata uses **AGPL-3.0-only** in native package metadata and both AUR
+recipes. This is the owner's choice; it does not relabel Qt, Ely, GTK or another
+dependency. Native packages retain the project AGPL text, Ely's original MIT
+copyright and full license, the dependency-notices guide, and an inventory of
+target-resolved Cargo dependency records with their available original
+license files. The inventory states when a registry publisher omitted a separate
+license document; it is not presented as a complete legal audit.
+
+For an AppImage, every copied system ELF, Qt/GIO/GdkPixbuf plugin, tool and asset
+package is resolved through dpkg ownership. Packaging retains that exact Ubuntu
+package's complete copyright file plus all referenced shared GPL/LGPL/Apache and
+other common license texts. It fails if a redistributed file's owner or copyright
+cannot be identified. `bundled-system-libraries.json` records the binary package,
+version, architecture, source package/version, upstream source metadata and
+matching `apt-get source` command. Corresponding source availability and any
+additional obligations must be evaluated against the exact terms; provenance
+records are not a blanket compliance guarantee.
+
+All retained texts and inventories are under
+`usr/share/licenses/appimage-mannger/`. AppImage `.build-info.json` points to this
+inventory and reports the number of traced system files and packages. Native
+DEB/RPM/pacman packages use distribution-provided dynamic libraries and their
+normal distribution notices instead of bundling those libraries.
+
+Packaging checks that the input binary's `--version` matches Cargo.toml and
+restricts disposable `--work-dir` paths to repository `work/` subdirectories.
+It never accepts `~/Applications` as a scratch directory.
