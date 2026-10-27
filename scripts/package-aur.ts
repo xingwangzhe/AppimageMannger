@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 /** Generate AUR-ready source and binary recipes with real SHA-256 checksums. */
+import { archPackageVersion } from "./packaging-common";
 import { createHash } from "node:crypto";
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
@@ -7,7 +8,7 @@ const root = resolve(import.meta.dir, ".."); process.chdir(root);
 const out = resolve(process.argv[2] || "dist"); mkdirSync(out, { recursive: true });
 const version = readFileSync("Cargo.toml", "utf8").match(/^version\s*=\s*"([^"]+)"/m)?.[1];
 if (!version) throw new Error("No package version");
-const aurVersion = version.replace(/-/g, "_");
+const aurVersion = archPackageVersion(version);
 const recipes = resolve("work/aur");
 const repo = "https://github.com/xingwangzhe/AppimageMannger";
 const sourceName = `AppimageMannger-${version}-source.tar.gz`;

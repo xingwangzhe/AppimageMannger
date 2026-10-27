@@ -932,86 +932,84 @@ impl Render for ManagerView {
             Page::Settings => self.settings(cx).into_any_element(),
             Page::About => self.about(cx).into_any_element(),
         };
-        FocusScope::new(&self.focus).root().size_full().child(
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .bg(colors.bg)
-                .text_color(colors.fg)
-                .text_sm()
-                .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
-                .on_action(
-                    cx.listener(|this, _: &Import, window, cx| this.choose_import(window, cx)),
-                )
-                .on_action(cx.listener(|this, _: &Settings, _, cx| {
-                    this.page = Page::Settings;
-                    cx.notify();
-                }))
-                .on_action(cx.listener(|this, _: &About, _, cx| {
-                    this.page = Page::About;
-                    cx.notify();
-                }))
-                .on_action(|_: &ToggleTheme, _, cx| {
-                    let next = if cx.theme().is_dark() {
-                        Mode::Light
-                    } else {
-                        Mode::Dark
-                    };
-                    Theme::set_mode(next, cx);
-                })
-                .on_action(|_: &Quit, _, cx| cx.quit())
-                .child(
-                    div()
-                        .bg(colors.surface)
-                        .border_b_1()
-                        .border_color(colors.border)
-                        .child(MenuBar::new("menu-bar", cx.get_menus().unwrap_or_default())),
-                )
-                .child(self.topbar(cx))
-                .child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .min_h_0()
-                        .child(self.sidebar(cx))
-                        .child(
-                            div()
-                                .id("detail-scroll")
-                                .flex_1()
-                                .min_w_0()
-                                .h_full()
-                                .overflow_y_scroll()
-                                .p_8()
-                                .child(page),
-                        ),
-                )
-                .child(
-                    div()
-                        .h(px(36.))
-                        .flex_shrink_0()
-                        .px_4()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .border_t_1()
-                        .border_color(colors.border)
-                        .bg(colors.surface)
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(if self.error {
-                                    colors.danger
-                                } else {
-                                    colors.fg_muted
-                                })
-                                .child(self.status.clone()),
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(colors.fg_muted)
-                                .child(if self.busy {
+        div()
+            .size_full()
+            .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
+            .on_action(cx.listener(|this, _: &Import, window, cx| this.choose_import(window, cx)))
+            .on_action(cx.listener(|this, _: &Settings, _, cx| {
+                this.page = Page::Settings;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &About, _, cx| {
+                this.page = Page::About;
+                cx.notify();
+            }))
+            .on_action(|_: &ToggleTheme, _, cx| {
+                let next = if cx.theme().is_dark() {
+                    Mode::Light
+                } else {
+                    Mode::Dark
+                };
+                Theme::set_mode(next, cx);
+            })
+            .on_action(|_: &Quit, _, cx| cx.quit())
+            .child(
+                FocusScope::new(&self.focus)
+                    .root()
+                    .size_full()
+                    .flex()
+                    .flex_col()
+                    .bg(colors.bg)
+                    .text_color(colors.fg)
+                    .text_sm()
+                    .child(
+                        div()
+                            .bg(colors.surface)
+                            .border_b_1()
+                            .border_color(colors.border)
+                            .child(MenuBar::new("menu-bar", cx.get_menus().unwrap_or_default())),
+                    )
+                    .child(self.topbar(cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_1()
+                            .min_h_0()
+                            .child(self.sidebar(cx))
+                            .child(
+                                div()
+                                    .id("detail-scroll")
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .overflow_y_scroll()
+                                    .p_8()
+                                    .child(page),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .h(px(36.))
+                            .flex_shrink_0()
+                            .px_4()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .border_t_1()
+                            .border_color(colors.border)
+                            .bg(colors.surface)
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(if self.error {
+                                        colors.danger
+                                    } else {
+                                        colors.fg_muted
+                                    })
+                                    .child(self.status.clone()),
+                            )
+                            .child(div().text_xs().text_color(colors.fg_muted).child(
+                                if self.busy {
                                     "处理中…".to_owned()
                                 } else {
                                     format!(
@@ -1019,10 +1017,10 @@ impl Render for ManagerView {
                                         self.apps.len(),
                                         std::env::consts::ARCH
                                     )
-                                }),
-                        ),
-                ),
-        )
+                                },
+                            )),
+                    ),
+            )
     }
 }
 pub fn run() {

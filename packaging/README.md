@@ -8,7 +8,7 @@ package manager and administrator authentication.
 cargo build --release --locked
 bun run scripts/package.ts --formats deb
 # CI/native runner with rpmbuild installed:
-GH_TOKEN="$(gh auth token)" bun run scripts/package.ts --formats deb,rpm,appimage,tar
+GH_TOKEN="$(gh auth token)" bun run scripts/package.ts --formats deb,rpm,appimage,tar,arch
 ```
 
 `--binary PATH`, `--arch x86_64|aarch64`, and `--out DIR` are optional. Architecture
@@ -20,12 +20,12 @@ packages use `amd64`/`arm64`; RPM, AppImage and portable archives use
 
 `.github/workflows/linux.yml` runs on pushes to main, pull requests, version tags,
 and manual dispatches. Both architectures run tests and Clippy, build optimized
-binaries, generate DEB/RPM/AppImage/portable tar packages, install the DEB, and run
+binaries, generate DEB/RPM/AppImage/pacman/portable tar packages, install the DEB, and run
 the CLI smoke test from the installed binary and AppImage. The assembly job adds
 source archives, AUR source/binary recipes, and `SHA256SUMS`. Checksums are verified
 before upload. Tag `v<exact Cargo.toml version>` to publish a GitHub release. A
 version containing `-` is published as a prerelease; DEB/RPM encode the separator
-as `~`, and AUR uses `_`. Manual publishing requires the existing tag to point to
+as `~`, and Arch/AUR removes prerelease separators (`0.1.0rc1`). Manual publishing requires the existing tag to point to
 the checked out commit and to match the manifest version.
 
 The latest GA runners on 2026-10-27 are `ubuntu-26.04` and `ubuntu-26.04-arm`.
@@ -71,3 +71,26 @@ The source recipe fetches locked Cargo dependencies during `prepare()`, then
 builds and tests offline. The recipes are release assets; uploading them to
 `aur.archlinux.org` requires a separate AUR account and SSH credentials and is not
 done by the GitHub workflow.
+
+## Native pacman binary packages
+
+`--formats arch` produces real `appimage-mannger-<pkgver>-1-<arch>.pkg.tar.zst`
+archives, separate from AUR recipe tarballs. They contain executable files plus
+standard `.PKGINFO`, `.BUILDINFO` and compressed `.MTREE` metadata. The glibc
+minimum comes from the ELF GLIBC symbol-version requirements, not an assumed
+distro version. The generated prebuilt-assembly recipe is hashed in BUILDINFO;
+the build tool is explicitly recorded as the Ubuntu/Bun native build pipeline,
+not falsely described as a build performed on Arch. No AUR account, repository,
+or AUR helper is needed to install the downloaded file:
+
+```sh
+sudo pacman -U ./appimage-mannger-*.pkg.tar.zst
+```
+
+CI checks metadata and file lists with pacman on both architectures, then uses
+the official `archlinux:latest` x86_64 Docker image to install the package and
+run CLI smoke tests. ARM64 receives native build plus pacman metadata validation;
+an ARM Arch container install test is not claimed.
+
+Arch versions use `0.1.0rc1` for `0.1.0-rc.1`: verified using libalpm vercmp
+to sort before `0.1.0`, so a stable release upgrades naturally.

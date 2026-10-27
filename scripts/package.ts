@@ -2,6 +2,7 @@
 /** Native Linux packages from the same release binary. Run with Bun, never as root. */
 import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
+import { archPackageVersion } from "./packaging-common";
 import { createHash } from "node:crypto";
 
 const root = resolve(import.meta.dir, "..");
@@ -18,6 +19,7 @@ const uname = run(["uname", "-m"]).trim();
 const arch = option("--arch", uname);
 if (!["x86_64", "aarch64"].includes(arch)) throw new Error(`Unsupported architecture ${arch}`);
 if (uname !== arch) throw new Error("Package on a native runner for the requested architecture");
+const archVersion = archPackageVersion(version);
 const packageVersion = version.replace(/-/g, "~");
 const debArch = arch === "x86_64" ? "amd64" : "arm64";
 const out = resolve(option("--out", "dist"));
@@ -71,6 +73,29 @@ if (formats.includes("tar")) {
   text(join(archiveRoot, "install.sh"), '#!/bin/sh\nset -eu\nprefix="${PREFIX:-$HOME/.local}"\ncd "$(dirname "$0")"\nmkdir -p "$prefix"\ncp -R usr/. "$prefix/"\nif command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$prefix/share/applications" || true; fi\nprintf "Installed in %s; ensure %s/bin is in PATH.\\n" "$prefix" "$prefix"\n', 0o755);
   const file = join(out, name + ".tar.gz"); run(["tar", "-czf", file, "-C", work, name]); made.push(file);
 }
+if (formats.includes("arch")) {
+  const packageRoot = join(work, "arch-root"); cpSync(stage, packageRoot, { recursive: true });
+  const builddate = Number(process.env.SOURCE_DATE_EPOCH || Math.floor(Date.now() / 1000));
+  const symbolVersions = [...run(["readelf", "--version-info", binary]).matchAll(/\bGLIBC_(\d+(?:\.\d+)+)\b/g)].map(m => m[1]);
+  const compareVersions = (a: string, b: string) => { const aa=a.split(".").map(Number), bb=b.split(".").map(Number); for (let i=0;i<Math.max(aa.length,bb.length);i++) { const delta=(aa[i]||0)-(bb[i]||0); if(delta) return delta; } return 0; };
+  const glibc = symbolVersions.sort(compareVersions).at(-1);
+  if (!glibc) throw new Error("Cannot determine ELF glibc symbol requirements");
+  const dependencies = [`glibc>=${glibc}`, "fontconfig", "libxkbcommon", "libxkbcommon-x11", "libxcb", "libx11", "wayland", "vulkan-icd-loader", "gcc-libs"];
+  const makeDependencies = ["rust", "cargo", "clang", "pkgconf", "cmake"];
+  const size = Number(run(["du", "--bytes", "--summarize", packageRoot]).split(/\s/)[0]);
+  const recipe = `# Native prebuilt ELF assembly recipe; release source: ${version}\npkgname=appimage-mannger\npkgver=${archVersion}\npkgrel=1\narch=('${arch}')\nlicense=('MIT')\npackage() { cp -a prebuilt/usr "$pkgdir/"; }\n`;
+  text(join(work, "PKGBUILD"), recipe);
+  const recipeHash = createHash("sha256").update(recipe).digest("hex");
+  text(join(packageRoot, ".PKGINFO"), `pkgname = appimage-mannger\npkgbase = appimage-mannger\nxdata = pkgtype=pkg\npkgver = ${archVersion}-1\npkgdesc = Native Linux AppImage manager built with Ely and GPUI\nurl = https://github.com/xingwangzhe/AppimageMannger\nbuilddate = ${builddate}\npackager = xingwangzhe <xingwangzhe@outlook.com>\nsize = ${size}\narch = ${arch}\nlicense = MIT\n${dependencies.map(d=>`depend = ${d}\n`).join("")}${makeDependencies.map(d=>`makedepend = ${d}\n`).join("")}`);
+  // This is an Ubuntu native ELF build, not an Arch makepkg build. Record that honestly.
+  text(join(packageRoot, ".BUILDINFO"), `format = 2\npkgname = appimage-mannger\npkgbase = appimage-mannger\npkgver = ${archVersion}-1\npkgarch = ${arch}\npkgbuild_sha256sum = ${recipeHash}\npackager = xingwangzhe <xingwangzhe@outlook.com>\nbuilddate = ${builddate}\nbuilddir = ${work}\nstartdir = ${root}\nbuildtool = appimage-mannger-bun-native\nbuildtoolver = ${version}-${arch}\nbuildenv = !distcc\nbuildenv = !ccache\noptions = !strip\noptions = !debug\n`);
+  // BSD mtree stores checksums and ownership; standard pacman can parse/verify this archive.
+  const mtree = run(["bsdtar", "--format=mtree", "--options=!all,use-set,type,uid,gid,mode,time,size,md5,sha256,link", "--uid", "0", "--gid", "0", "-cf", "-", ".PKGINFO", ".BUILDINFO", "usr"], packageRoot);
+  const compressed = Bun.spawnSync(["gzip", "-n", "-c"], { stdin: new TextEncoder().encode(mtree), stdout: "pipe", stderr: "pipe" });
+  if (compressed.exitCode) throw new Error(compressed.stderr.toString()); writeFileSync(join(packageRoot, ".MTREE"), compressed.stdout);
+  const file = join(out, `appimage-mannger-${archVersion}-1-${arch}.pkg.tar.zst`);
+  run(["bsdtar", "--zstd", "--uid", "0", "--gid", "0", "-cf", file, ".PKGINFO", ".BUILDINFO", ".MTREE", "usr"], packageRoot); made.push(file);
+}
 if (formats.includes("appimage")) {
   const appdir = join(work, "AppimageMannger.AppDir"); cpSync(stage, appdir, { recursive: true });
   install("packaging/appimage-mannger.desktop", join(appdir, "appimage-mannger.desktop"));
@@ -106,4 +131,4 @@ if (formats.includes("appimage")) {
   text(join(out, name + ".build-info.json"), JSON.stringify({ version, architecture: arch, appimagetool: { release: release.tag_name, asset: asset.name, sha256: digest }, bundledLibraries: libs, host: run(["ldd", "--version"]).split("\n")[0], note: "Uses host libc, GPU drivers and fonts; latest-build glibc requirements apply." }, null, 2) + "\n");
 }
 for (const file of made) console.log(file);
-if (made.length === 0) throw new Error("No package formats requested (deb,rpm,appimage,tar)");
+if (made.length === 0) throw new Error("No package formats requested (deb,rpm,appimage,tar,arch)");

@@ -17,7 +17,7 @@ on:
         default: ''
 
 env:
-  CARGO_BUILD_JOBS: 2
+  CARGO_BUILD_JOBS: 4
 
 permissions:
   contents: read
@@ -54,7 +54,7 @@ jobs:
       - name: Native dependencies and packaging tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config clang cmake libfontconfig-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev libvulkan-dev libssl-dev rpm zstd squashfs-tools file desktop-file-utils xvfb mesa-vulkan-drivers fonts-noto-core
+          sudo apt-get install -y build-essential pkg-config clang cmake libfontconfig-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libx11-xcb-dev libvulkan-dev libssl-dev rpm zstd squashfs-tools libarchive-tools pacman-package-manager makepkg file desktop-file-utils xvfb mesa-vulkan-drivers fonts-noto-core
           rustc --version
           bun --version
           ldd --version | head -n 1
@@ -62,16 +62,17 @@ jobs:
         uses: Swatinem/rust-cache@v2.9.3
         with:
           key: ${{ matrix.arch }}
+          cache-on-failure: true
       - name: Format
         run: cargo fmt --all --check
-      - name: Unit and integration tests
-        run: cargo test --release --locked
       - name: Clippy
         run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Unit and integration tests
+        run: cargo test --release --locked
       - name: Build native release
         run: cargo build --release --locked
-      - name: Build deb, rpm, AppImage and portable archive
-        run: bun run scripts/package.ts --formats deb,rpm,appimage,tar --arch '${{ matrix.arch }}'
+      - name: Build deb, rpm, AppImage, pacman and portable archive
+        run: bun run scripts/package.ts --formats deb,rpm,appimage,tar,arch --arch '${{ matrix.arch }}'
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Inspect packages and smoke-test installed deb and AppImage
@@ -87,6 +88,23 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --version
           APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --smoke-test --directory /tmp/appimage-mannger-ci-empty
           desktop-file-validate /usr/share/applications/appimage-mannger.desktop
+      - name: Validate real pacman binary package metadata and file list
+        run: |
+          mkdir -p /tmp/appimage-mannger-pacman-db
+          printf '[options]\nArchitecture = auto\nSigLevel = Never\nLocalFileSigLevel = Never\n' > /tmp/appimage-mannger-pacman.conf
+          pacman --config /tmp/appimage-mannger-pacman.conf --dbpath /tmp/appimage-mannger-pacman-db -Qip dist/*.pkg.tar.zst
+          pacman --config /tmp/appimage-mannger-pacman.conf --dbpath /tmp/appimage-mannger-pacman-db -Qlp dist/*.pkg.tar.zst
+          test "$(vercmp 0.1.0rc1 0.1.0)" = -1
+      - name: Install and smoke-test pacman package on latest Arch Linux
+        if: matrix.arch == 'x86_64'
+        run: |
+          docker run --rm -v "$PWD/dist:/packages:ro" archlinux:latest bash -euc '
+            pacman -Syu --noconfirm
+            pacman -U --noconfirm /packages/*.pkg.tar.zst
+            appimage-mannger --version
+            mkdir -p /tmp/empty-appimages
+            appimage-mannger --smoke-test --directory /tmp/empty-appimages
+          '
       - name: Upload native packages
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

@@ -61,7 +61,9 @@ codegraph init -y .
 codegraph sync .
 ```
 
-完整打包：`bun run scripts/package.ts --formats deb,rpm,appimage,tar`，再运行 `bun run scripts/package-aur.ts` 和 `bun run scripts/package-checksums.ts`。需要 dpkg-dev、rpm、squashfs-tools 等工具；CI 自动安装。每个架构均在对应原生 runner 上编译和打包。发布 tag 必须与 Cargo 版本完全匹配，推送 `v<version>` 后 CI 测试、构建、安装烟雾测试通过才发布。
+完整打包：`bun run scripts/package.ts --formats deb,rpm,appimage,tar,arch`，再运行 `bun run scripts/package-aur.ts` 和 `bun run scripts/package-checksums.ts`。需要 dpkg-dev、rpm、squashfs-tools 等工具；CI 自动安装。每个架构均在对应原生 runner 上编译和打包。发布 tag 必须与 Cargo 版本完全匹配，推送 `v<version>` 后 CI 测试、构建、安装烟雾测试通过才发布。
+
+Arch 用户也可以直接下载 `.pkg.tar.zst`，用 `sudo pacman -U ./appimage-mannger-*.pkg.tar.zst` 安装，无需加入任何仓库。
 
 AUR 产物包含带 SHA-256 的 `PKGBUILD`、`.SRCINFO` 和 recipe 源包，覆盖源代码构建与二进制安装方案。它们作为 release 产物提供；提交到 aur.archlinux.org 需要单独的 AUR 账户与 SSH 权限。
 
