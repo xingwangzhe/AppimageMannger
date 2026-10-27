@@ -20,4 +20,6 @@
 - The installed engine replaced two isolated import versions with one managed executable while keeping both sources. GIO listed the manager as registered/recommended for both AppImage MIME types.
 - Installed GTK rendered the localized Chinese name with the correct desktop application ID and an actual live progress bar reporting percentage and transferred/total bytes (observed 2.9%, 2.1 MB / 73.1 MB).
 - The owner confirmed completing local testing and requested that further local tests stop. No exhaustive 26-language by 3-toolkit visual test matrix is claimed.
-- Tagged CI publication is recorded after completion.
+- Tagged CI succeeded for native x86_64 and aarch64 plus release assembly: https://github.com/xingwangzhe/AppimageMannger/actions/runs/40462133417 .
+- Published stable v1.0.1 with 16 assets: https://github.com/xingwangzhe/AppimageMannger/releases/tag/v1.0.1 . The 15 entries in published SHA256SUMS were matched against GitHub asset SHA-256 digests.
+- A repository documentation follow-up adds 26 localized READMEs and three shared English screenshots captured directly from GNOME/Wayland window actor textures through the screenshot portal; these are not desktop crops.

@@ -2,6 +2,7 @@
 /** Validate catalog coverage, formatting tokens and localized QuickStart guides. */
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 
 const root = resolve(import.meta.dir, '..');
 const locales = ['en','zh-CN','zh-TW','ja','ko','de','fr','es','pt-BR','ru','it','nl','pl','tr','uk','vi','id','th','ar','hi','bn','fa','he','sv','cs','ro'];
@@ -99,7 +100,30 @@ for (const locale of locales) {
   const key = locale === 'en' ? 'Name' : `Name[${locale.replaceAll('-', '_')}]`;
   const name = desktop.split('\n').find(line => line.startsWith(key + '='))?.slice(key.length + 1);
   if (!name || name !== catalog['AppimageMannger 管理器']) errors.push(`Desktop/application name mismatch: ${locale}`);
+  const readmePath = resolve(root, locale === 'en' ? 'README.md' : `README.${locale}.md`);
+  if (!existsSync(readmePath)) { errors.push(`Missing localized README: ${locale}`); continue; }
+  const readme = readFileSync(readmePath, 'utf8');
+  if (!readme.startsWith(`# ${name}\n`)) errors.push(`README application name mismatch: ${locale}`);
+  for (const image of ['ely-gpui-en.png', 'qt-en.png', 'gnome-en.png']) {
+    if (!readme.includes(`](docs/images/${image})`)) errors.push(`README English screenshot missing: ${locale}/${image}`);
+  }
+  const screenshots = [...readme.matchAll(/!\[[^\]]*\]\(([^)]+\.png)\)/g)].map(match => match[1]);
+  if (screenshots.length !== 3 || screenshots.some(path => !/^docs\/images\/(ely-gpui|qt|gnome)-en\.png$/.test(path))) errors.push(`README must use exactly the shared English screenshots: ${locale}`);
+  for (const match of readme.matchAll(/\]\(([^)]+)\)/g)) {
+    const target = match[1].split('#')[0];
+    if (target && !/^https?:/.test(target) && !existsSync(resolve(root, target))) errors.push(`Broken README link: ${locale}/${target}`);
+  }
 }
+const screenshotSizes: Record<string, [number, number]> = {'ely-gpui-en.png':[1440,1040], 'qt-en.png':[1460,1060], 'gnome-en.png':[1490,1090]};
+const screenshotDigests = new Set<string>();
+for (const [image, [width, height]] of Object.entries(screenshotSizes)) {
+  const path = resolve(root, 'docs/images', image);
+  if (!existsSync(path)) { errors.push(`Screenshot file missing: ${image}`); continue; }
+  const bytes = readFileSync(path);
+  if (bytes.length < 1000 || bytes.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' || bytes.readUInt32BE(16) !== width || bytes.readUInt32BE(20) !== height) errors.push(`Invalid README screenshot size/format: ${image}`);
+  screenshotDigests.add(createHash('sha256').update(bytes).digest('hex'));
+}
+if (screenshotDigests.size !== 3) errors.push('README toolkit screenshots must be three different images');
 if (process.argv.includes('--write')) {
   writeFileSync(resolve(root,'docs/i18n/coverage.json'), JSON.stringify(summary,null,2)+'\n');
   const lines = ['# Localization coverage', '',
@@ -116,4 +140,4 @@ if (process.argv.includes('--write')) {
   writeFileSync(resolve(root,'docs/i18n/COVERAGE.md'),lines.join('\n'));
 }
 if (errors.length) { for (const error of errors) console.error(error); process.exit(1); }
-console.log(`i18n: ${report.length} locales and localized application/desktop names, ${keys.length} keys, ${sourceKeys.size} source msgids, ${requiredCore.length}/${requiredCore.length} core keys per locale, no placeholder mismatches; all 26 QuickStarts validated.`);
+console.log(`i18n: ${report.length} locales and localized application/desktop names, ${keys.length} keys, ${sourceKeys.size} source msgids, ${requiredCore.length}/${requiredCore.length} core keys per locale, no placeholder mismatches; all 26 QuickStarts/READMEs and shared English screenshots validated.`);

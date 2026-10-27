@@ -1,59 +1,65 @@
-# AppimageMannger
+# AppImage Manager
 
 [![Linux CI](https://github.com/xingwangzhe/AppimageMannger/actions/workflows/linux.yml/badge.svg)](https://github.com/xingwangzhe/AppimageMannger/actions/workflows/linux.yml)
 
-A Linux AppImage manager with a shared Rust engine and three **real native frontends**: Ely/GPUI, Qt 6 Widgets, and GTK 4/libadwaita. Project license: **AGPL-3.0-only**.
+[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português (Brasil)](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md) · [Nederlands](README.nl.md) · [Polski](README.pl.md) · [Türkçe](README.tr.md) · [Українська](README.uk.md) · [Tiếng Việt](README.vi.md) · [Bahasa Indonesia](README.id.md) · [ไทย](README.th.md) · [العربية](README.ar.md) · [हिन्दी](README.hi.md) · [বাংলা](README.bn.md) · [فارسی](README.fa.md) · [עברית](README.he.md) · [Svenska](README.sv.md) · [Čeština](README.cs.md) · [Română](README.ro.md)
 
-The application and user guides support 26 languages. Choose a guide below, or change **Settings → Language** in the application. Toolkit, language and theme choices are saved and restored on restart. Diagnostic levels and engine errors remain English.
+AppImage Manager is a native Linux manager for AppImage applications. Select an application in the left list to see its version, architecture, size, icon and installation path on the right. Import copies an application into the managed directory; it does not remove the original download.
 
-[English](docs/i18n/en.md) · [简体中文](docs/i18n/zh-CN.md) · [繁體中文](docs/i18n/zh-TW.md) · [日本語](docs/i18n/ja.md) · [한국어](docs/i18n/ko.md) · [Deutsch](docs/i18n/de.md) · [Français](docs/i18n/fr.md) · [Español](docs/i18n/es.md) · [Português (Brasil)](docs/i18n/pt-BR.md) · [Русский](docs/i18n/ru.md) · [Italiano](docs/i18n/it.md) · [Nederlands](docs/i18n/nl.md) · [Polski](docs/i18n/pl.md) · [Türkçe](docs/i18n/tr.md) · [Українська](docs/i18n/uk.md) · [Tiếng Việt](docs/i18n/vi.md) · [Bahasa Indonesia](docs/i18n/id.md) · [ไทย](docs/i18n/th.md) · [العربية](docs/i18n/ar.md) · [हिन्दी](docs/i18n/hi.md) · [বাংলা](docs/i18n/bn.md) · [فارسی](docs/i18n/fa.md) · [עברית](docs/i18n/he.md) · [Svenska](docs/i18n/sv.md) · [Čeština](docs/i18n/cs.md) · [Română](docs/i18n/ro.md)
+## Three native interfaces
+
+All screenshots show the English interface of version 1.0.1. Every translated README uses the same three screenshots.
+
+### Ely / GPUI
+
+![Ely / GPUI — English interface](docs/images/ely-gpui-en.png)
+
+### Qt 6 Widgets
+
+![Qt 6 Widgets — English interface](docs/images/qt-en.png)
+
+### GNOME / GTK 4 / libadwaita
+
+![GNOME / GTK 4 — English interface](docs/images/gnome-en.png)
 
 ## Features
 
-- Searchable application list and details: real icon, version, size, architecture and installation path.
-- Default library: `~/Applications`, configurable without moving existing files.
-- Import AppImages, create/repair desktop menu entries, launch applications and open their directory.
-- Importing another version replaces the existing application and retains a restorable Trash backup. Right-click an AppImage in your file manager and choose the localized AppImage Manager under Open With to import it directly.
-- Discover GitHub stable updates from embedded metadata or an explicitly configured official repository; install an architecture-matching AppImage with size/format/digest checks, atomic replacement and rollback data.
-- Recoverable uninstall through freedesktop Trash, preserving personal application data.
-- Real toolkit switching: **GPUI** uses Ely components; **Qt** loads Qt 6; **GNOME** loads GTK 4/libadwaita. Switching toolkit or language saves first and restarts the application.
-- Persistent language, theme, toolkit, directory/repository settings, editing drafts, selected application, window size and maximized state.
-- Draggable, persistent library/detail divider and application display names localized in all 26 languages.
-- AppImage metadata/icon inspection never launches or mounts the application.
+- Import replaces older versions; original downloads remain, and previous installations can be restored from Trash.
+- Application icons and AppImage Open With integration; `--repair-registration` restores registration.
+- Anonymous HTTPS Release downloads with architecture and SHA-256 checks, real progress, percentage and transferred size. No `gh` or token is required.
+- Draggable dividers and saved preferences across Ely/GPUI, Qt 6 Widgets and GNOME/GTK 4, with display names localized into 26 languages.
+- Read application metadata and icons without running or mounting the AppImage.
 
-## Install
+## Install and open
 
-Download a matching architecture package from [Releases](https://github.com/xingwangzhe/AppimageMannger/releases).
+Download the package for your processor from Releases. Choose one installation method below. For the portable method, replace AppimageMannger.AppImage with the downloaded filename. Arch packages are provided; this guide does not assume an official AUR listing.
 
 ```sh
 # Debian / Ubuntu
-sudo apt install ./appimage-mannger_*_amd64.deb
-# Fedora / RPM systems
-sudo dnf install ./appimage-mannger-*.x86_64.rpm
-# Arch / pacman systems
-sudo pacman -U ./appimage-mannger-*.pkg.tar.zst
-# Standalone AppImage
-chmod +x AppimageMannger-*.AppImage
-./AppimageMannger-*.AppImage
+sudo apt install ./appimage-mannger*.deb
+# Fedora / RPM
+sudo dnf install ./appimage-mannger*.rpm
+# Arch Linux
+sudo pacman -U ./appimage-mannger*.pkg.tar.zst
+# AppImage
+chmod +x ./AppimageMannger.AppImage
+./AppimageMannger.AppImage
 ```
 
-ARM64 packages use `arm64` / `aarch64` filenames. AUR PKGBUILD/.SRCINFO archives are also provided as recipes; they do not require an AUR account to use and are separate from directly installable pacman packages. No AUR service publication is implied.
+## Settings that remain saved
 
-Current CI uses native Ubuntu 26.04 x86_64/aarch64 runners, current stable Rust and current Bun. Packages built on a recent system may require recent glibc/toolkit versions; AppImage does not bundle libc or GPU drivers. Inspect dependency/build-info files for the actual baseline.
+The default directory is ~/Applications. Change it in Settings; existing applications are not moved automatically. Choose the actual GPUI/Ely, Qt 6 Widgets or GNOME/GTK 4/libadwaita frontend. Changing the frontend saves your preferences and restarts the manager. Theme, directory, language, selected application and window state are retained. Open Settings → Language to choose one of 26 languages. Error, Info and Warning diagnostic levels deliberately remain in English.
 
-## Use
+## Updates and removal
 
-Open an application on the left to view its details. If its update source is unknown, enter the upstream `owner/repository`, save it, and check for updates. Unsupported version metadata, missing architecture assets and network failures produce explicit diagnostics. A newer matching asset enables installation.
+Before checking updates, confirm the application’s GitHub repository. The manager reads supported .upd_info metadata or accepts owner/repository manually. Check for a stable release, then install its matching AppImage. Downloads are size and format checked; SHA-256 is verified when a digest is published. Replacement is atomic and the previous version is backed up. A failed update preserves the installed application.
 
-Update discovery reads public HTTPS Release pages and downloads release attachments directly. Clients need neither the `gh` command nor a GitHub token. `appimage-mannger --repair-registration` restores the file manager's Open With registration if necessary.
+Uninstall moves the application and its desktop entries to Trash, where they can be restored. Personal configuration remains available.
 
-Use the window caption to drag or maximize the window. Settings provide the persistent native toolkit, language, light/dark appearance and application library. Directory and repository edits are retained as drafts until applied; existing files are not moved when selecting another library.
 
-Shortcuts in the Ely/GPUI frontend: `Ctrl+O` import, `Ctrl+R` refresh, `Ctrl+,` settings, `Ctrl+Q` quit. Other toolkits use their native menus and controls.
+## Development
 
-## Develop and verify
-
-See [build and release](docs/BUILD-AND-RELEASE.md), [architecture](docs/ARCHITECTURE.md), [agent guidance](AGENTS.md), and [repository skills](skills/).
+[BUILD-AND-RELEASE](docs/BUILD-AND-RELEASE.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [i18n](docs/i18n/COVERAGE.md) · [1.0.1](docs/RELEASE-1.0.1.md) · [THIRD-PARTY-NOTICES](docs/THIRD-PARTY-NOTICES.md)
 
 ```sh
 bun run scripts/check-i18n.ts
@@ -62,14 +68,12 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --release --locked
 cargo build --release --locked
 bun run scripts/package.ts --formats deb
-codegraph init -y .
-codegraph sync .
 ```
 
-Native development requires Qt6Widgets, GTK4, libadwaita and json-glib alongside the GPUI platform libraries. `build.rs` builds both helpers and generates their English fallback from the same catalogs used by Rust. All frontends call the same bounded JSON RPC engine; no shell interpolation is used for paths or requests.
+## License and source
 
-[Translation coverage](docs/i18n/COVERAGE.md) records the actual catalog/core/placeholder checks. [1.0.0 handoff](docs/RELEASE-1.0.0.md) records verified local and CI results. [Third-party notices](docs/THIRD-PARTY-NOTICES.md) explain dependency licensing; the project's AGPL choice does not replace Qt, GTK or Ely licenses.
+The project uses AGPL-3.0-only. You may use, modify and redistribute it under that license. Distribution and modified network services carry corresponding-source obligations; consult LICENSE for the full terms.
 
-## License
+[Source and releases](https://github.com/xingwangzhe/AppimageMannger)
 
-AGPL-3.0-only © 2026 xingwangzhe · xingwangzhe@outlook.com. See [LICENSE](LICENSE).
+AGPL-3.0-only © 2026 xingwangzhe · xingwangzhe@outlook.com · [LICENSE](LICENSE)
