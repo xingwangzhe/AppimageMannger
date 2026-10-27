@@ -36,6 +36,9 @@ fn default_width() -> f32 {
 fn default_height() -> f32 {
     800.0
 }
+fn default_sidebar_fraction() -> f32 {
+    0.27
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -56,6 +59,8 @@ pub struct Config {
     pub window_height: f32,
     #[serde(default)]
     pub maximized: bool,
+    #[serde(default = "default_sidebar_fraction")]
+    pub sidebar_fraction: f32,
     #[serde(default)]
     pub directory_draft: Option<String>,
     #[serde(default)]
@@ -75,6 +80,7 @@ impl Default for Config {
             window_width: default_width(),
             window_height: default_height(),
             maximized: false,
+            sidebar_fraction: default_sidebar_fraction(),
             directory_draft: None,
             repository_drafts: BTreeMap::new(),
         }
@@ -111,6 +117,10 @@ impl Config {
         if !config.window_height.is_finite() || !(580.0..=4320.0).contains(&config.window_height) {
             config.window_height = default_height();
         }
+        if !config.sidebar_fraction.is_finite() {
+            config.sidebar_fraction = default_sidebar_fraction();
+        }
+        config.sidebar_fraction = config.sidebar_fraction.clamp(0.15, 0.7);
         ensure!(
             config.applications_dir.is_absolute(),
             "Applications directory must be an absolute path"
@@ -155,6 +165,7 @@ pub struct AppInfo {
     pub desktop_file: Option<PathBuf>,
     pub architecture: String,
     pub icon_path: Option<PathBuf>,
+    pub update_progress_path: PathBuf,
 }
 
 pub fn scan(config: &Config) -> Result<Vec<AppInfo>> {
@@ -210,13 +221,22 @@ pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
     if name.is_empty() {
         name = filename.clone();
     }
-    let desktop = find_desktop(path).unwrap_or_default();
+    let mut desktop = find_desktop(path).unwrap_or_default();
+    // Embedded publisher metadata is authoritative; generated launchers may be old.
+    if let Some(embedded) = crate::metadata::embedded_desktop(path) {
+        desktop.values.extend(embedded);
+    }
     if let Some(v) = desktop.values.get("Name") {
         name = v.clone();
     }
-    if version.is_none() {
-        version = desktop.values.get("X-AppImage-Version").cloned();
-    }
+    version = desktop
+        .values
+        .get("X-AppImage-Version")
+        .filter(|value| {
+            version.is_none() || semver::Version::parse(value.trim_start_matches('v')).is_ok()
+        })
+        .cloned()
+        .or(version);
     let update_info = read_update_info(path)
         .ok()
         .flatten()
@@ -237,6 +257,9 @@ pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
         });
     Ok(AppInfo {
         id: stable_id(&filename),
+        update_progress_path: user_data_dir()?
+            .join("appimage-mannger/progress")
+            .join(format!("{}.json", stable_id(&filename))),
         name,
         version: version.unwrap_or_else(|| "Unknown".into()),
         path: path.to_path_buf(),
@@ -330,6 +353,7 @@ pub fn launch(app: &AppInfo) -> Result<()> {
 pub fn import_app(config: &Config, source: &Path) -> Result<AppInfo> {
     validate_appimage(source)?;
     fs::create_dir_all(&config.applications_dir)?;
+    let _lock = lock_library(config)?;
     let filename = source
         .file_name()
         .context("Missing source filename")?
@@ -346,35 +370,234 @@ pub fn import_app(config: &Config, source: &Path) -> Result<AppInfo> {
     } else {
         format!("{filename}.AppImage")
     };
-    let destination = config.applications_dir.join(filename);
-    if source.canonicalize()? == destination.canonicalize().unwrap_or(destination.clone()) {
-        let app = inspect(config, &destination)?;
-        integrate(&app)?;
-        return Ok(app);
+    let incoming = inspect(config, source)?;
+    let mut matches: Vec<_> = scan(config)?
+        .into_iter()
+        .filter(|app| same_application(app, &incoming))
+        .collect();
+    matches.sort_by_key(|app| {
+        (
+            config.last_selected_path.as_ref() != Some(&app.path),
+            app.repository.is_none(),
+            app.path.clone(),
+        )
+    });
+    let source_path = source.canonicalize()?;
+    let in_library = source
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("appimage"))
+        && source_path.parent() == Some(config.applications_dir.canonicalize()?.as_path());
+    // Keep the installed path stable so launchers, selection and repository settings survive.
+    let destination = if in_library {
+        source_path.clone()
+    } else {
+        matches
+            .first()
+            .map(|app| app.path.clone())
+            .unwrap_or_else(|| config.applications_dir.join(filename))
+    };
+    if fs::symlink_metadata(&destination).is_ok() {
+        ensure_managed_path(config, &destination)?;
+        ensure!(
+            matches.iter().any(|a| a.path == destination),
+            "Destination belongs to a different application"
+        );
     }
-    ensure!(
-        !destination.exists(),
-        "An application with the same filename already exists in the destination"
-    );
     let mut temp = tempfile::NamedTempFile::new_in(&config.applications_dir)?;
     std::io::copy(&mut File::open(source)?, &mut temp)?;
     temp.as_file()
         .set_permissions(fs::Permissions::from_mode(0o755))?;
     temp.as_file().sync_all()?;
     validate_appimage(temp.path())?;
-    temp.persist_noclobber(&destination).map_err(|e| e.error)?;
-    let app = inspect(config, &destination)?;
-    if let Err(error) = integrate(&app) {
-        fs::remove_file(destination)?;
-        return Err(error);
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut File::open(temp.path())?, &mut hasher)?;
+    let digest = hex::encode(hasher.finalize());
+    let mut moved = Vec::new();
+    let mut replaced = false;
+    let launcher = applications_desktop_dir()?.join(format!(
+        "appimage-mannger-{}.desktop",
+        stable_id(&destination.file_name().unwrap().to_string_lossy())
+    ));
+    let old_launcher = fs::read(&launcher).ok();
+    let result = (|| -> Result<AppInfo> {
+        for app in &matches {
+            if app.path.canonicalize()? == source_path {
+                continue;
+            }
+            ensure_managed_path(config, &app.path)?;
+            // The destination's launchers continue pointing to the atomic replacement.
+            if app.path != destination {
+                for desktop in find_desktops(&app.path)?.into_iter().filter_map(|d| d.path) {
+                    let trash = move_to_trash(&desktop)?;
+                    moved.push((desktop, trash));
+                }
+            }
+            let trash = trash_file(&app.path, app.path == destination)?;
+            moved.push((app.path.clone(), trash));
+        }
+        if source_path != destination {
+            if matches.iter().any(|app| app.path == destination) {
+                temp.persist(&destination).map_err(|e| e.error)?;
+            } else {
+                temp.persist_noclobber(&destination).map_err(|e| e.error)?;
+            }
+            replaced = true;
+        }
+        let mut app = inspect(config, &destination)?;
+        app.version = incoming.version.clone();
+        integrate(&app)?;
+        save_installed_version(&app, &digest)?;
+        Ok(app)
+    })();
+    if result.is_err() {
+        if replaced && !moved.iter().any(|(original, _)| original == &destination) {
+            let _ = fs::remove_file(&destination);
+        }
+        for (original, trash) in moved.iter().rev() {
+            if let Err(error) = restore_from_trash(original, trash) {
+                log::error!(
+                    "Import rollback failed for {}: {error:#}",
+                    original.display()
+                );
+            }
+        }
+        if let Some(bytes) = old_launcher {
+            let _ = fs::write(&launcher, bytes);
+        } else {
+            let _ = fs::remove_file(&launcher);
+        }
+        refresh_desktop_database();
     }
-    inspect(config, &app.path)
+    result
+}
+pub(crate) fn lock_library(config: &Config) -> Result<File> {
+    let lock = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .custom_flags(0x20000) // Linux O_NOFOLLOW: never lock an attacker-supplied symlink.
+        .mode(0o600)
+        .open(config.applications_dir.join(".appimage-mannger.lock"))?;
+    lock.lock()?;
+    Ok(lock)
+}
+
+fn application_stem(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_lowercase();
+    // Version, architecture and build hashes are packaging details, not identity.
+    let suffix = regex::Regex::new(
+        r"(?i)(?:[-_ ]v?\d+(?:\.\d+)+|[-_ ](?:linux|x86_64|amd64|aarch64|arm64|x64)(?:[-_ ]|$))",
+    )
+    .unwrap();
+    let end = suffix.find(&stem).map_or(stem.len(), |m| m.start());
+    stem[..end]
+        .chars()
+        .filter(|c| c.is_alphanumeric())
+        .collect()
+}
+fn same_application(a: &AppInfo, b: &AppInfo) -> bool {
+    if a.architecture != b.architecture {
+        return false;
+    }
+    let a_meta = crate::metadata::embedded_desktop(&a.path).unwrap_or_default();
+    let b_meta = crate::metadata::embedded_desktop(&b.path).unwrap_or_default();
+    if let (Some(a), Some(b)) = (a_meta.get("X-AppImage-Id"), b_meta.get("X-AppImage-Id")) {
+        return !a.is_empty() && a == b;
+    }
+    if let (Some(a), Some(b)) = (&a.repository, &b.repository)
+        && a != b
+    {
+        return false;
+    }
+    let stem = application_stem(&a.path);
+    !stem.is_empty() && stem == application_stem(&b.path)
+        || a_meta
+            .get("Name")
+            .is_some_and(|name| !name.is_empty() && b_meta.get("Name") == Some(name))
 }
 
 /// Install our own desktop entry without changing entries owned by other tools.
 pub fn integrate_app(config: &Config, app: &AppInfo) -> Result<()> {
     ensure_managed_path(config, &app.path)?;
+    repair_registration()?;
     integrate(app)
+}
+
+pub fn self_icon_path() -> Result<PathBuf> {
+    let dir = dirs::cache_dir()
+        .context("Cannot determine cache directory")?
+        .join("appimage-mannger/branding");
+    fs::create_dir_all(&dir)?;
+    let path = dir.join("appimage-mannger.png");
+    let bytes = include_bytes!("../packaging/appimage-mannger.png");
+    if fs::read(&path).ok().as_deref() != Some(bytes) {
+        let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
+        temp.write_all(bytes)?;
+        temp.persist(&path).map_err(|e| e.error)?;
+    }
+    Ok(path)
+}
+
+/// Register Open With support for installed and portable launches alike.
+pub fn repair_registration() -> Result<()> {
+    let dir = applications_desktop_dir()?;
+    fs::create_dir_all(&dir)?;
+    let engine = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute() && p.is_file())
+        .unwrap_or(std::env::current_exe()?);
+    let content = include_str!("../packaging/appimage-mannger.desktop")
+        .replace(
+            "Exec=appimage-mannger --import %F",
+            &format!("Exec={} --import %F", desktop_exec(&engine)),
+        )
+        .replace(
+            "TryExec=appimage-mannger",
+            &format!("TryExec={}", desktop_value(&engine.to_string_lossy())),
+        )
+        .replace(
+            "Icon=appimage-mannger",
+            &format!(
+                "Icon={}",
+                desktop_value(&self_icon_path()?.to_string_lossy())
+            ),
+        );
+    for (name, text) in [
+        ("appimage-mannger.desktop", content.clone()),
+        (
+            "io.github.xingwangzhe.AppimageMannger.desktop",
+            format!(
+                "{}\nNoDisplay=true\n",
+                content
+                    .lines()
+                    .filter(|line| !line.starts_with("MimeType="))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            ),
+        ),
+    ] {
+        let path = dir.join(name);
+        if fs::read_to_string(&path).ok().as_deref() != Some(&text) {
+            let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
+            temp.write_all(text.as_bytes())?;
+            temp.persist(path).map_err(|e| e.error)?;
+        }
+    }
+    let mime = user_data_dir()?.join("mime");
+    fs::create_dir_all(mime.join("packages"))?;
+    let path = mime.join("packages/appimage-mannger.xml");
+    let xml = include_str!("../packaging/appimage-mannger.xml");
+    if fs::read_to_string(&path).ok().as_deref() != Some(xml) {
+        fs::write(path, xml)?;
+        let _ = Command::new("update-mime-database").arg(mime).status();
+    }
+    refresh_desktop_database();
+    Ok(())
 }
 
 pub fn integrate(app: &AppInfo) -> Result<()> {
@@ -384,28 +607,30 @@ pub fn integrate(app: &AppInfo) -> Result<()> {
         !app.path.to_string_lossy().chars().any(char::is_control),
         "Application path contains control characters"
     );
-    if !find_desktops(&app.path)?.is_empty() {
+    let path = dir.join(format!("appimage-mannger-{}.desktop", app.id));
+    if find_desktops(&app.path)?
+        .iter()
+        .any(|d| d.path.as_ref() != Some(&path))
+    {
         return Ok(());
     }
-    let path = dir.join(format!("appimage-mannger-{}.desktop", app.id));
     let icon = app
-        .desktop_file
+        .icon_path
         .as_ref()
-        .and_then(|p| fs::read_to_string(p).ok())
-        .and_then(|s| {
-            s.lines()
-                .find_map(|l| l.strip_prefix("Icon=").map(str::to_owned))
-        })
+        .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "application-x-executable".into());
     let content = format!(
-        "[Desktop Entry]\nType=Application\nName={}\nComment={}\nExec={}\nTryExec={}\nIcon={}\nTerminal=false\nCategories=Utility;\nX-AppimageMannger-Managed=true\n",
+        "[Desktop Entry]\nType=Application\nName={}\nComment={}\nExec={}\nTryExec={}\nIcon={}\nTerminal=false\nCategories=Utility;\nX-AppimageMannger-Managed=true\nX-AppImage-Version={}\n",
         desktop_value(&app.name),
         desktop_value(&app.description),
         desktop_exec(&app.path),
         desktop_value(&app.path.to_string_lossy()),
-        desktop_value(&icon)
+        desktop_value(&icon),
+        desktop_value(&app.version)
     );
-    fs::write(path, content)?;
+    let mut temp = tempfile::NamedTempFile::new_in(&dir)?;
+    temp.write_all(content.as_bytes())?;
+    temp.persist(path).map_err(|e| e.error)?;
     refresh_desktop_database();
     Ok(())
 }
@@ -436,6 +661,7 @@ fn refresh_desktop_database() {
 }
 
 pub fn uninstall(config: &Config, app: &AppInfo) -> Result<PathBuf> {
+    let _lock = lock_library(config)?;
     ensure_managed_path(config, &app.path)?;
     validate_appimage(&app.path)?;
     let mut paths: Vec<PathBuf> = find_desktops(&app.path)?
@@ -449,9 +675,7 @@ pub fn uninstall(config: &Config, app: &AppInfo) -> Result<PathBuf> {
             Ok(destination) => moved.push((original, destination)),
             Err(error) => {
                 for (original, destination) in moved.iter().rev() {
-                    if fs::rename(destination, original).is_ok() {
-                        let _ = remove_trash_info(destination);
-                    }
+                    let _ = restore_from_trash(original, destination);
                 }
                 return Err(error.context(
                     "Uninstall failed; restoration of previously moved files was attempted",
@@ -461,6 +685,23 @@ pub fn uninstall(config: &Config, app: &AppInfo) -> Result<PathBuf> {
     }
     refresh_desktop_database();
     Ok(moved.last().unwrap().1.clone())
+}
+fn restore_from_trash(original: &Path, trash: &Path) -> Result<()> {
+    if let Err(error) = fs::rename(trash, original) {
+        if error.raw_os_error() != Some(18) {
+            return Err(error.into());
+        }
+        let mut temp = tempfile::NamedTempFile::new_in(
+            original.parent().context("Missing original directory")?,
+        )?;
+        std::io::copy(&mut File::open(trash)?, &mut temp)?;
+        temp.as_file()
+            .set_permissions(fs::metadata(trash)?.permissions())?;
+        temp.as_file().sync_all()?;
+        temp.persist(original).map_err(|e| e.error)?;
+        fs::remove_file(trash)?;
+    }
+    remove_trash_info(trash)
 }
 fn remove_trash_info(destination: &Path) -> Result<()> {
     let name = destination
@@ -479,6 +720,9 @@ fn remove_trash_info(destination: &Path) -> Result<()> {
     Ok(())
 }
 fn move_to_trash(path: &Path) -> Result<PathBuf> {
+    trash_file(path, false)
+}
+fn trash_file(path: &Path, keep_original: bool) -> Result<PathBuf> {
     let trash = user_data_dir()?.join("Trash");
     fs::create_dir_all(trash.join("files"))?;
     fs::create_dir_all(trash.join("info"))?;
@@ -502,6 +746,24 @@ fn move_to_trash(path: &Path) -> Result<PathBuf> {
         .open(&info)?;
     f.write_all(content.as_bytes())?;
     f.sync_all()?;
+    if keep_original {
+        let copy = (|| -> Result<()> {
+            let mut out = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(fs::metadata(path)?.permissions().mode())
+                .open(&dest)?;
+            std::io::copy(&mut File::open(path)?, &mut out)?;
+            out.sync_all()?;
+            Ok(())
+        })();
+        if let Err(error) = copy {
+            let _ = fs::remove_file(&info);
+            let _ = fs::remove_file(&dest);
+            return Err(error);
+        }
+        return Ok(dest);
+    }
     if let Err(error) = fs::rename(path, &dest) {
         if error.raw_os_error() != Some(18) {
             let _ = fs::remove_file(info);
@@ -862,6 +1124,7 @@ mod tests {
         config.window_width = 1040.0;
         config.window_height = 720.0;
         config.maximized = true;
+        config.sidebar_fraction = 0.42;
         config.last_selected_path = Some(temp.path().join("Tool.AppImage"));
         config.directory_draft = Some("/tmp/a draft".into());
         config
@@ -875,6 +1138,7 @@ mod tests {
         assert_eq!(reloaded.window_width, 1040.0);
         assert_eq!(reloaded.window_height, 720.0);
         assert!(reloaded.maximized);
+        assert_eq!(reloaded.sidebar_fraction, 0.42);
         assert_eq!(reloaded.last_selected_path, config.last_selected_path);
         assert_eq!(reloaded.directory_draft, config.directory_draft);
         assert_eq!(reloaded.repository_drafts, config.repository_drafts);
@@ -940,6 +1204,30 @@ mod tests {
         let p = d.path().join("x.AppImage");
         fixture(&p);
         assert_eq!(read_update_info(&p).unwrap(), None);
+    }
+    #[test]
+    fn publisher_build_hash_does_not_override_comparable_filename_version() {
+        let d = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        with_test_data(data.path(), || {
+            let p = d.path().join("Tool-2.1.10.AppImage");
+            fixture(&p);
+            let desktop = applications_desktop_dir().unwrap();
+            fs::create_dir_all(&desktop).unwrap();
+            fs::write(
+                desktop.join("tool.desktop"),
+                format!(
+                    "[Desktop Entry]\nName=Tool\nTryExec={}\nX-AppImage-Version=308113a\n",
+                    p.display()
+                ),
+            )
+            .unwrap();
+            let config = Config {
+                applications_dir: d.path().into(),
+                ..Config::default()
+            };
+            assert_eq!(inspect(&config, &p).unwrap().version, "2.1.10");
+        });
     }
     #[test]
     fn reads_bounded_elf_update_section_and_discovers_repository() {
@@ -1014,6 +1302,108 @@ mod tests {
         };
         assert!(import_app(&config, &source).is_err());
         assert!(source.exists());
+    }
+    #[test]
+    fn import_replaces_versions_preserves_source_settings_and_restorable_backups() {
+        let d = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        with_test_data(data.path(), || {
+            let library = d.path().join("apps");
+            fs::create_dir(&library).unwrap();
+            let old = library.join("Tool-1.2.3-linux-x86_64_deadbeef.AppImage");
+            let duplicate = library.join("Tool-1.3.0-x86_64.AppImage");
+            let other = library.join("OtherTool-1.0.0.AppImage");
+            for path in [&old, &duplicate, &other] {
+                fixture(path);
+            }
+            let mut config = Config {
+                applications_dir: library,
+                ..Config::default()
+            };
+            config.repositories.insert(
+                old.file_name().unwrap().to_string_lossy().into_owned(),
+                "owner/tool".into(),
+            );
+            integrate(&inspect(&config, &old).unwrap()).unwrap();
+            integrate(&inspect(&config, &duplicate).unwrap()).unwrap();
+            let source = d.path().join("Tool-2.0.0-x86_64.AppImage");
+            fixture(&source);
+            let mut new = fs::read(&source).unwrap();
+            new[100] = 42;
+            fs::write(&source, &new).unwrap();
+            let imported = import_app(&config, &source).unwrap();
+            assert_eq!(imported.version, "2.0.0");
+            assert_eq!(inspect(&config, &imported.path).unwrap().version, "2.0.0");
+            assert_eq!(scan(&config).unwrap().len(), 2);
+            assert_eq!(fs::read(&imported.path).unwrap(), new);
+            assert_eq!(fs::read(&source).unwrap(), new);
+            assert!(other.exists());
+            assert_eq!(
+                fs::read_dir(data.path().join("Trash/info"))
+                    .unwrap()
+                    .count(),
+                3
+            );
+            assert_eq!(find_desktops(&imported.path).unwrap().len(), 1);
+            assert_eq!(imported.repository.as_deref(), Some("owner/tool"));
+            // Re-importing the same filename also replaces instead of failing.
+            import_app(&config, &source).unwrap();
+            assert_eq!(scan(&config).unwrap().len(), 2);
+        });
+    }
+    #[test]
+    fn failed_import_restores_previous_binary_and_launcher() {
+        let d = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        with_test_data(data.path(), || {
+            let config = Config {
+                applications_dir: d.path().join("apps"),
+                ..Config::default()
+            };
+            fs::create_dir(&config.applications_dir).unwrap();
+            let old = config.applications_dir.join("Tool-1.0.0.AppImage");
+            fixture(&old);
+            let app = inspect(&config, &old).unwrap();
+            integrate(&app).unwrap();
+            let launcher = app
+                .desktop_file
+                .clone()
+                .unwrap_or_else(|| find_desktop(&old).unwrap().path.unwrap());
+            let original_launcher = fs::read(&launcher).unwrap();
+            // Force version-record persistence to fail after the replacement and launcher write.
+            fs::create_dir_all(data.path().join("appimage-mannger")).unwrap();
+            fs::write(data.path().join("appimage-mannger/installed"), "blocked").unwrap();
+            let source = d.path().join("Tool-2.0.0.AppImage");
+            fixture(&source);
+            let mut bytes = fs::read(&source).unwrap();
+            bytes[100] = 77;
+            fs::write(&source, bytes).unwrap();
+            assert!(import_app(&config, &source).is_err());
+            assert_eq!(fs::read(&old).unwrap()[100], 0);
+            assert_eq!(fs::read(&launcher).unwrap(), original_launcher);
+            assert!(source.exists());
+        });
+    }
+    #[test]
+    fn identity_does_not_merge_other_apps_or_architectures() {
+        let d = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        with_test_data(data.path(), || {
+            let a = d.path().join("Tool-1.0.0.AppImage");
+            let b = d.path().join("Toolbox-2.0.0.AppImage");
+            fixture(&a);
+            fixture(&b);
+            let config = Config {
+                applications_dir: d.path().into(),
+                ..Config::default()
+            };
+            let a = inspect(&config, &a).unwrap();
+            let mut b = inspect(&config, &b).unwrap();
+            assert!(!same_application(&a, &b));
+            b.path = d.path().join("Tool-2.0.0.AppImage");
+            b.architecture = "aarch64".into();
+            assert!(!same_application(&a, &b));
+        });
     }
     #[test]
     fn reuses_existing_launcher_and_trashes_all_launchers_with_restore_metadata() {

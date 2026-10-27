@@ -7,9 +7,10 @@ use ely_core::{
     Assets,
     buttons::{Button, ButtonVariant, SegmentedControl},
     forms::{Choice, Input, InputEvent, PathInput, Select, TextInput},
-    layout::{Card, CardHeader},
+    layout::{Card, CardHeader, SplitPane},
     lists::ListItem,
     menus::MenuBar,
+    motion::ProgressBar,
     primitives::{FocusScope, Icon, IconName, Image},
     theme::{ActiveTheme, IconSize, Mode, Theme},
 };
@@ -51,6 +52,7 @@ struct ManagerView {
     error: bool,
     checked: Option<UpdateCheck>,
     confirm_uninstall: bool,
+    progress: Option<update::DownloadProgress>,
 }
 
 impl ManagerView {
@@ -113,6 +115,7 @@ impl ManagerView {
             error,
             checked: None,
             confirm_uninstall: false,
+            progress: None,
         };
         if !view.apps.is_empty() {
             let at = view
@@ -188,6 +191,30 @@ impl ManagerView {
                 .unwrap_or(true)
         });
         view.persist(cx);
+        cx.spawn(async move |owner, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(350))
+                    .await;
+                if owner
+                    .update(cx, |view, cx| {
+                        let progress = if view.busy {
+                            view.selected_app().as_ref().and_then(update::read_progress)
+                        } else {
+                            None
+                        };
+                        if progress != view.progress {
+                            view.progress = progress;
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
         view
     }
     fn select(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -241,6 +268,7 @@ impl ManagerView {
             let result = rx.await.unwrap_or_else(|e| Err(e.into()));
             let _ = view.update(cx, |view, cx| {
                 view.busy = false;
+                view.progress = None;
                 match result {
                     Ok(JobResult::Apps(apps, message)) => {
                         let old = view.selected_app().map(|a| a.path);
@@ -536,19 +564,14 @@ impl ManagerView {
                     .items_center()
                     .gap_3()
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(32.))
-                            .rounded_lg()
-                            .bg(colors.accent)
-                            .text_color(colors.on_accent)
-                            .child(
-                                Icon::new(IconName::Package)
-                                    .size(IconSize::Md)
-                                    .color(colors.on_accent),
-                            ),
+                        Image::new(
+                            "manager-brand",
+                            dirs::cache_dir()
+                                .unwrap_or_default()
+                                .join("appimage-mannger/branding/appimage-mannger.png"),
+                        )
+                        .size(px(36.))
+                        .fit(gpui::ObjectFit::Contain),
                     )
                     .child(
                         div()
@@ -558,7 +581,7 @@ impl ManagerView {
                                 div()
                                     .text_sm()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child("AppimageMannger"),
+                                    .child(tr("AppimageMannger 管理器")),
                             )
                             .child(
                                 div()
@@ -616,7 +639,7 @@ impl ManagerView {
             })
             .collect::<Vec<_>>();
         div()
-            .w(px(294.))
+            .w_full()
             .flex_shrink_0()
             .h_full()
             .bg(colors.surface)
@@ -1051,7 +1074,7 @@ impl ManagerView {
                 div()
                     .text_2xl()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child("AppimageMannger"),
+                    .child(tr("AppimageMannger 管理器")),
             )
             .child(tr(format!(
                 "版本 {} · AGPL-3.0-only",
@@ -1134,6 +1157,38 @@ impl Render for ManagerView {
             Page::Settings => self.settings(cx).into_any_element(),
             Page::About => self.about(cx).into_any_element(),
         };
+        let owner = cx.weak_entity();
+        let rtl = crate::i18n::is_rtl();
+        let sizes = if rtl {
+            [
+                1.0 - self.config.sidebar_fraction,
+                self.config.sidebar_fraction,
+            ]
+        } else {
+            [
+                self.config.sidebar_fraction,
+                1.0 - self.config.sidebar_fraction,
+            ]
+        };
+        let split = SplitPane::new("library-split", gpui::Axis::Horizontal, px(200.))
+            .sizes(&sizes)
+            .on_resize(move |sizes, _, cx| {
+                let _ = owner.update(cx, |view, cx| {
+                    view.config.sidebar_fraction = sizes[usize::from(rtl)].clamp(0.15, 0.7);
+                    view.persist(cx);
+                });
+            });
+        let detail = div()
+            .id("detail-scroll")
+            .size_full()
+            .overflow_y_scroll()
+            .p_8()
+            .child(page);
+        let split = if rtl {
+            split.pane(detail).pane(self.sidebar(cx))
+        } else {
+            split.pane(self.sidebar(cx)).pane(detail)
+        };
         div()
             .id("app-window")
             .size_full()
@@ -1177,24 +1232,7 @@ impl Render for ManagerView {
                             .child(MenuBar::new("menu-bar", cx.get_menus().unwrap_or_default())),
                     )
                     .child(self.topbar(cx))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_1()
-                            .min_h_0()
-                            .when(crate::i18n::is_rtl(), |row| row.flex_row_reverse())
-                            .child(self.sidebar(cx))
-                            .child(
-                                div()
-                                    .id("detail-scroll")
-                                    .flex_1()
-                                    .min_w_0()
-                                    .h_full()
-                                    .overflow_y_scroll()
-                                    .p_8()
-                                    .child(page),
-                            ),
-                    )
+                    .child(div().flex().flex_1().min_h_0().child(split))
                     .child(
                         div()
                             .h(px(36.))
@@ -1206,6 +1244,36 @@ impl Render for ManagerView {
                             .border_t_1()
                             .border_color(colors.border)
                             .bg(colors.surface)
+                            .when_some(self.progress.as_ref(), |row, progress| {
+                                let fraction = progress.total.filter(|t| *t > 0).map(|total| {
+                                    (progress.downloaded as f32 / total as f32).clamp(0., 1.)
+                                });
+                                let text = if let (Some(total), Some(fraction)) =
+                                    (progress.total, fraction)
+                                {
+                                    format!(
+                                        "{:.0}% · {} / {}",
+                                        fraction * 100.,
+                                        human_size(progress.downloaded),
+                                        human_size(total)
+                                    )
+                                } else {
+                                    human_size(progress.downloaded)
+                                };
+                                row.child(
+                                    div()
+                                        .w(px(230.))
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(div().text_xs().child(text))
+                                        .child(if let Some(fraction) = fraction {
+                                            ProgressBar::new("download-progress", fraction)
+                                        } else {
+                                            ProgressBar::indeterminate("download-progress")
+                                        }),
+                                )
+                            })
                             .child(
                                 div()
                                     .text_xs()
@@ -1238,6 +1306,7 @@ pub fn run() {
             ely_core::init(cx).expect("Ely initialization failed");
             let preferences = Config::load().unwrap_or_default();
             crate::i18n::set_locale(&preferences.language);
+            cx.set_app_identity("appimage-mannger", &tr("AppimageMannger 管理器"));
             cx.set_global(crate::i18n::ely_i18n(&preferences.language));
             Theme::set_mode_now(
                 if preferences.appearance == Appearance::Dark {
@@ -1296,6 +1365,13 @@ pub fn run() {
                     }),
                     window_min_size: Some(size(px(880.), px(580.))),
                     app_id: Some("appimage-mannger".into()),
+                    icon: Some(std::sync::Arc::new(
+                        image::load_from_memory(include_bytes!(
+                            "../packaging/appimage-mannger.png"
+                        ))
+                        .expect("Bundled application icon")
+                        .to_rgba8(),
+                    )),
                     ..Default::default()
                 },
                 |window, cx| cx.new(|cx| ManagerView::new(window, cx)),

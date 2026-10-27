@@ -9,6 +9,7 @@ const sources = ['src/ui.rs', 'native/qt.cpp', 'native/gnome.c'];
 const requiredCore = ['设置','导入','卸载应用','检查更新','安装更新','语言','外观','保存更新源','应用信息','安装位置','打开目录','取消','关闭','浅色','深色','界面后端','跟随系统','保存并扫描','项目主页','选择本地 .AppImage 文件','确认','保存'];
 const intentionallyEnglish = /失败|无效|无法|超出|通讯|没有返回|超时|不能包含|必须是|请输入有效|请选择绝对|找不到|未正常完成/;
 const errors: string[] = [];
+const desktop = readFileSync(resolve(root, 'packaging/appimage-mannger.desktop'), 'utf8');
 
 function literals(source: string): Set<string> {
   const found = new Set<string>();
@@ -93,6 +94,12 @@ for (const locale of locales) {
   report.push({locale,keys:ownKeys.length,coreKeys:core.length,localizedValues:localized,englishDiagnosticFallbacks:fallback,otherEnglishIdentical:identical,quickStart});
 }
 const summary = {localeCount:report.length,sourceMsgids:sourceKeys.size,catalogMsgids:keys.length,requiredCoreKeys:requiredCore.length,placeholderErrors:errors.filter(e=>e.includes('placeholder')).length,errors,locales:report};
+for (const locale of locales) {
+  const catalog = json(resolve(root, `resources/i18n/${locale}.json`));
+  const key = locale === 'en' ? 'Name' : `Name[${locale.replaceAll('-', '_')}]`;
+  const name = desktop.split('\n').find(line => line.startsWith(key + '='))?.slice(key.length + 1);
+  if (!name || name !== catalog['AppimageMannger 管理器']) errors.push(`Desktop/application name mismatch: ${locale}`);
+}
 if (process.argv.includes('--write')) {
   writeFileSync(resolve(root,'docs/i18n/coverage.json'), JSON.stringify(summary,null,2)+'\n');
   const lines = ['# Localization coverage', '',
@@ -109,4 +116,4 @@ if (process.argv.includes('--write')) {
   writeFileSync(resolve(root,'docs/i18n/COVERAGE.md'),lines.join('\n'));
 }
 if (errors.length) { for (const error of errors) console.error(error); process.exit(1); }
-console.log(`i18n: ${report.length} locales, ${keys.length} keys, ${sourceKeys.size} source msgids, ${requiredCore.length}/${requiredCore.length} core keys per locale, no placeholder mismatches; all 26 QuickStarts validated.`);
+console.log(`i18n: ${report.length} locales and localized application/desktop names, ${keys.length} keys, ${sourceKeys.size} source msgids, ${requiredCore.length}/${requiredCore.length} core keys per locale, no placeholder mismatches; all 26 QuickStarts validated.`);

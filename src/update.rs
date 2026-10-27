@@ -9,8 +9,54 @@ use std::{
     io::{Read, Write},
     os::unix::fs::PermissionsExt,
     path::PathBuf,
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DownloadProgress {
+    pub downloaded: u64,
+    pub total: Option<u64>,
+}
+pub fn read_progress(app: &AppInfo) -> Option<DownloadProgress> {
+    if fs::metadata(&app.update_progress_path).ok()?.len() > 4096 {
+        return None;
+    }
+    serde_json::from_slice(&fs::read(&app.update_progress_path).ok()?).ok()
+}
+struct ProgressReporter {
+    path: PathBuf,
+    last_write: Instant,
+}
+impl ProgressReporter {
+    fn new(app: &AppInfo) -> Self {
+        Self {
+            path: app.update_progress_path.clone(),
+            last_write: Instant::now() - Duration::from_secs(1),
+        }
+    }
+    fn report(&mut self, downloaded: u64, total: Option<u64>, force: bool) {
+        if !force && self.last_write.elapsed() < Duration::from_millis(250) {
+            return;
+        }
+        self.last_write = Instant::now();
+        let write = (|| -> Result<()> {
+            let dir = self.path.parent().context("Missing progress directory")?;
+            fs::create_dir_all(dir)?;
+            let mut temp = tempfile::NamedTempFile::new_in(dir)?;
+            serde_json::to_writer(&mut temp, &DownloadProgress { downloaded, total })?;
+            temp.persist(&self.path).map_err(|e| e.error)?;
+            Ok(())
+        })();
+        if let Err(error) = write {
+            log::debug!("Download progress: {error:#}");
+        }
+    }
+}
+impl Drop for ProgressReporter {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UpdateAsset {
@@ -64,10 +110,100 @@ pub fn check_update(app: &AppInfo) -> Result<UpdateCheck> {
         });
     };
     let repo = manager::normalize_repository(repo)?;
-    check_update_at(
-        app,
-        &format!("https://api.github.com/repos/{repo}/releases/latest"),
-    )
+    // Public Release pages and browser download URLs require neither gh nor tokens.
+    // API is optional: it can supply exact sizes/digests, but cannot block updates.
+    match check_release_page(app, &repo) {
+        Ok(check) => Ok(check),
+        Err(page_error) => check_update_at(
+            app,
+            &format!("https://api.github.com/repos/{repo}/releases/latest"),
+        )
+        .with_context(|| format!("Release page discovery failed: {page_error:#}")),
+    }
+}
+
+fn bounded_text(response: reqwest::blocking::Response) -> Result<String> {
+    let mut bytes = Vec::new();
+    response
+        .error_for_status()?
+        .take(4 * 1024 * 1024 + 1)
+        .read_to_end(&mut bytes)?;
+    ensure!(
+        bytes.len() <= 4 * 1024 * 1024,
+        "Release response is too large"
+    );
+    Ok(String::from_utf8(bytes)?)
+}
+fn check_release_page(app: &AppInfo, repo: &str) -> Result<UpdateCheck> {
+    let client = client(45)?;
+    let response = client
+        .get(format!("https://github.com/{repo}/releases/latest"))
+        .send()?
+        .error_for_status()?;
+    let url = response.url().clone();
+    let prefix = format!("/{repo}/releases/tag/");
+    let tag = url
+        .path()
+        .strip_prefix(&prefix)
+        .context("Latest stable release did not resolve to a release tag")?;
+    ensure!(
+        url.host_str() == Some("github.com") && !tag.is_empty(),
+        "Unexpected release redirect"
+    );
+    let html = bounded_text(
+        client
+            .get(format!(
+                "https://github.com/{repo}/releases/expanded_assets/{tag}"
+            ))
+            .send()?,
+    )?;
+    let release = release_from_html(repo, tag, url.as_str(), &html)?;
+    select_release(app, release)
+}
+fn release_from_html(repo: &str, tag: &str, release_url: &str, html: &str) -> Result<Release> {
+    let links = regex::Regex::new(r#"href="([^"]+)""#)?;
+    let hashes = regex::Regex::new(r"sha256:[a-fA-F0-9]{64}")?;
+    let prefix = format!("/{repo}/releases/download/{tag}/");
+    let mut assets = Vec::new();
+    for row in html.split("</li>") {
+        for link in links.captures_iter(row) {
+            let href = &link[1];
+            let Some(name) = href.strip_prefix(&prefix) else {
+                continue;
+            };
+            let url = reqwest::Url::parse(&format!("https://github.com{href}"))?;
+            // URL-decode only the filename; retain the publisher's encoded URL for transfer.
+            let name = reqwest::Url::parse(&format!("https://local/?name={name}"))?
+                .query_pairs()
+                .next()
+                .context("Missing asset name")?
+                .1
+                .into_owned();
+            if !assets
+                .iter()
+                .any(|asset: &ReleaseAsset| asset.browser_download_url == url.as_str())
+            {
+                assets.push(ReleaseAsset {
+                    name,
+                    browser_download_url: url.to_string(),
+                    size: 0,
+                    digest: hashes.find(row).map(|m| m.as_str().to_owned()),
+                });
+            }
+        }
+    }
+    ensure!(
+        !assets.is_empty(),
+        "Release page contains no downloadable assets"
+    );
+    Ok(Release {
+        tag_name: tag.into(),
+        html_url: release_url.into(),
+        body: None,
+        draft: false,
+        prerelease: false,
+        assets,
+    })
 }
 fn client(timeout: u64) -> Result<Client> {
     Ok(Client::builder()
@@ -123,6 +259,9 @@ fn check_update_at(app: &AppInfo, url: &str) -> Result<UpdateCheck> {
     );
     let release: Release =
         serde_json::from_slice(&bytes).context("Invalid update server response")?;
+    select_release(app, release)
+}
+fn select_release(app: &AppInfo, release: Release) -> Result<UpdateCheck> {
     ensure!(
         !release.draft && !release.prerelease,
         "Latest release is not a stable release"
@@ -155,10 +294,10 @@ fn check_update_at(app: &AppInfo, url: &str) -> Result<UpdateCheck> {
         .collect();
     let best = candidates
         .iter()
-        .map(|a| architecture_score(&a.name, std::env::consts::ARCH))
+        .map(|a| candidate_score(&a.name, app))
         .max()
         .unwrap_or(0);
-    candidates.retain(|a| architecture_score(&a.name, std::env::consts::ARCH) == best);
+    candidates.retain(|a| candidate_score(&a.name, app) == best);
     let ambiguous = candidates.len() > 1;
     let asset = if candidates.len() == 1 {
         candidates.pop()
@@ -195,6 +334,15 @@ fn check_update_at(app: &AppInfo, url: &str) -> Result<UpdateCheck> {
         },
         status,
     })
+}
+fn candidate_score(name: &str, app: &AppInfo) -> u8 {
+    let portable = app
+        .path
+        .to_string_lossy()
+        .to_lowercase()
+        .contains("portable");
+    architecture_score(name, std::env::consts::ARCH) * 2
+        + u8::from(name.to_lowercase().contains("portable") == portable)
 }
 // Standard AppImage update information uses '*' and '?' globs for asset names.
 fn glob_matches(pattern: &str, value: &str) -> bool {
@@ -253,6 +401,7 @@ fn asset_matches(name: &str, arch: &str) -> bool {
 }
 
 pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Result<AppInfo> {
+    let _lock = manager::lock_library(config)?;
     manager::ensure_managed_path(config, &app.path)?;
     manager::validate_appimage(&app.path)?;
     ensure!(
@@ -264,15 +413,23 @@ pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Re
         "Update download URL must use HTTPS"
     );
     ensure!(
-        asset.size > 64 && asset.size <= 4 * 1024 * 1024 * 1024,
+        (asset.size == 0 || asset.size > 64) && asset.size <= 4 * 1024 * 1024 * 1024,
         "Invalid update asset size"
     );
     let mut download = tempfile::NamedTempFile::new_in(&config.applications_dir)?;
-    let mut response = client(300)?
+    let mut progress = ProgressReporter::new(app);
+    progress.report(0, (asset.size > 0).then_some(asset.size), true);
+    let mut response = client(1800)?
         .get(&asset.url)
         .send()
         .context("Failed to download update")?
         .error_for_status()?;
+    let expected_size = if asset.size > 0 {
+        Some(asset.size)
+    } else {
+        response.content_length()
+    };
+    progress.report(0, expected_size, true);
     let mut hasher = Sha256::new();
     let mut total = 0u64;
     let mut buf = [0; 64 * 1024];
@@ -283,16 +440,18 @@ pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Re
         }
         total += count as u64;
         ensure!(
-            total <= asset.size && total <= 4 * 1024 * 1024 * 1024,
+            expected_size.is_none_or(|size| total <= size) && total <= 4 * 1024 * 1024 * 1024,
             "Downloaded asset exceeds the expected size"
         );
         hasher.update(&buf[..count]);
         download.write_all(&buf[..count])?;
+        progress.report(total, expected_size, false);
     }
+    progress.report(total, expected_size, true);
     ensure!(
-        total == asset.size,
+        expected_size.is_none_or(|size| total == size),
         "Incomplete download: expected {} bytes, received {total} bytes",
-        asset.size
+        expected_size.unwrap_or(0)
     );
     let computed = hex::encode(hasher.finalize());
     if let Some(digest) = &asset.digest {
@@ -322,6 +481,10 @@ pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Re
     std::io::copy(&mut File::open(&app.path)?, &mut backup_temp)?;
     backup_temp.as_file().sync_all()?;
     backup_temp.persist(&backup).map_err(|e| e.error)?;
+    let launcher = manager::user_data_dir()?
+        .join("applications")
+        .join(format!("appimage-mannger-{}.desktop", app.id));
+    let old_launcher = fs::read(&launcher).ok();
     download.persist(&app.path).map_err(|e| e.error)?;
     let result = (|| -> Result<AppInfo> {
         let mut updated = manager::inspect(config, &app.path)?;
@@ -339,6 +502,11 @@ pub fn install_update(config: &Config, app: &AppInfo, asset: &UpdateAsset) -> Re
             .set_permissions(fs::Permissions::from_mode(0o755))?;
         restore.as_file().sync_all()?;
         restore.persist(&app.path).map_err(|e| e.error)?;
+        if let Some(bytes) = old_launcher {
+            fs::write(&launcher, bytes)?;
+        } else if launcher.exists() {
+            fs::remove_file(&launcher)?;
+        }
         return Err(error.context("Update failed; original application was restored"));
     }
     result
@@ -423,6 +591,35 @@ mod tests {
         assert!(check.asset.is_some());
     }
     #[test]
+    fn public_release_html_selects_normal_native_asset_and_publisher_digest() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("Tool-1.0.0.AppImage");
+        fs::write(&p, fixture()).unwrap();
+        let config = Config {
+            applications_dir: dir.path().into(),
+            ..Config::default()
+        };
+        let app = manager::inspect(&config, &p).unwrap();
+        let arch = std::env::consts::ARCH;
+        let digest = format!("sha256:{}", "a".repeat(64));
+        let html = format!(
+            r#"<li><a href="/owner/tool/releases/download/v2.0.0/Tool-{arch}.AppImage">normal</a><span>{digest}</span></li><li><a href="/owner/tool/releases/download/v2.0.0/Tool-{arch}-portable.AppImage">portable</a></li><li><a href="https://evil.test/unrelated.AppImage">evil</a></li>"#
+        );
+        let release = release_from_html(
+            "owner/tool",
+            "v2.0.0",
+            "https://github.com/owner/tool/releases/tag/v2.0.0",
+            &html,
+        )
+        .unwrap();
+        assert_eq!(release.assets.len(), 2);
+        let check = select_release(&app, release).unwrap();
+        let asset = check.asset.unwrap();
+        assert_eq!(asset.name, format!("Tool-{arch}.AppImage"));
+        assert_eq!(asset.digest.as_deref(), Some(digest.as_str()));
+        assert_eq!(asset.size, 0);
+    }
+    #[test]
     fn checksum_failure_preserves_original() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("Tool-1.2.0.AppImage");
@@ -443,6 +640,7 @@ mod tests {
         };
         assert!(install_update(&config, &app, &asset).is_err());
         assert_eq!(fs::read(p).unwrap(), old);
+        assert!(!app.update_progress_path.exists());
     }
     #[test]
     fn forbids_untrusted_transport_and_credentials() {
@@ -473,7 +671,7 @@ mod tests {
             let asset = UpdateAsset {
                 name: format!("Tool-{}.AppImage", std::env::consts::ARCH),
                 url: serve(new.clone()),
-                size: new.len() as u64,
+                size: 0, // Release HTML omits exact size; validate Content-Length and digest.
                 digest: Some(format!("sha256:{}", hex::encode(Sha256::digest(&new)))),
                 version: "1.3.0".into(),
             };
@@ -482,6 +680,81 @@ mod tests {
             assert_eq!(fs::read(&p).unwrap(), new);
             assert_eq!(fs::read(backup_path(&app).unwrap()).unwrap(), old);
             assert_eq!(manager::inspect(&config, &p).unwrap().version, "1.3.0");
+        });
+    }
+    #[test]
+    fn live_download_reports_bytes_before_atomic_replacement_and_cleans_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        manager::with_test_data(data.path(), || {
+            let path = dir.path().join("Tool-1.0.0.AppImage");
+            let old = fixture();
+            fs::write(&path, &old).unwrap();
+            let config = Config {
+                applications_dir: dir.path().into(),
+                ..Config::default()
+            };
+            let app = manager::inspect(&config, &path).unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let mut bytes = fixture();
+            bytes.resize(256, 42);
+            let digest = hex::encode(Sha256::digest(&bytes));
+            let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+            let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+            let server = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = [0; 4096];
+                let _ = socket.read(&mut request).unwrap();
+                write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Length: 256\r\nConnection: close\r\n\r\n"
+                )
+                .unwrap();
+                socket.write_all(&bytes[..128]).unwrap();
+                thread::sleep(Duration::from_millis(300));
+                socket.write_all(&bytes[128..192]).unwrap();
+                paused_tx.send(()).unwrap();
+                resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                socket.write_all(&bytes[192..]).unwrap();
+            });
+            let asset = UpdateAsset {
+                name: format!("Tool-{}.AppImage", std::env::consts::ARCH),
+                url,
+                size: 0,
+                digest: Some(format!("sha256:{digest}")),
+                version: "2.0.0".into(),
+            };
+            let worker_config = config.clone();
+            let worker_app = app.clone();
+            let data_path = data.path().to_path_buf();
+            let download = thread::spawn(move || {
+                manager::with_test_data(&data_path, || {
+                    install_update(&worker_config, &worker_app, &asset)
+                })
+            });
+            paused_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            let mut progress = None;
+            for _ in 0..50 {
+                progress = read_progress(&app);
+                if progress.as_ref().is_some_and(|p| p.downloaded >= 192) {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(
+                progress,
+                Some(DownloadProgress {
+                    downloaded: 192,
+                    total: Some(256)
+                })
+            );
+            assert_eq!(fs::read(&path).unwrap(), old);
+            resume_tx.send(()).unwrap();
+            assert!(download.join().unwrap().is_ok());
+            server.join().unwrap();
+            assert!(!app.update_progress_path.exists());
+            assert_eq!(manager::inspect(&config, &path).unwrap().version, "2.0.0");
         });
     }
     #[test]

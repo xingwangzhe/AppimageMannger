@@ -10,30 +10,30 @@ Source UI msgids: **204**. Catalog msgids: **215**, including compatibility alia
 | --- | ---: | ---: | ---: | ---: | --- |
 | en | 215 | 22/22 | 0 | 0 | Yes |
 | zh-CN | 215 | 22/22 | 215 | 0 | Yes |
-| zh-TW | 215 | 22/22 | 184 | 30 | Yes |
-| ja | 215 | 22/22 | 184 | 30 | Yes |
-| ko | 215 | 22/22 | 184 | 30 | Yes |
-| de | 215 | 22/22 | 179 | 30 | Yes |
-| fr | 215 | 22/22 | 175 | 30 | Yes |
-| es | 215 | 22/22 | 184 | 30 | Yes |
-| pt-BR | 215 | 22/22 | 184 | 30 | Yes |
-| ru | 215 | 22/22 | 184 | 30 | Yes |
-| it | 215 | 22/22 | 182 | 30 | Yes |
-| nl | 215 | 22/22 | 183 | 30 | Yes |
-| pl | 215 | 22/22 | 184 | 30 | Yes |
-| tr | 215 | 22/22 | 184 | 30 | Yes |
-| uk | 215 | 22/22 | 184 | 30 | Yes |
-| vi | 215 | 22/22 | 183 | 30 | Yes |
-| id | 215 | 22/22 | 184 | 30 | Yes |
-| th | 215 | 22/22 | 184 | 30 | Yes |
-| ar | 215 | 22/22 | 184 | 30 | Yes |
-| hi | 215 | 22/22 | 184 | 30 | Yes |
-| bn | 215 | 22/22 | 184 | 30 | Yes |
-| fa | 215 | 22/22 | 184 | 30 | Yes |
-| he | 215 | 22/22 | 184 | 30 | Yes |
-| sv | 215 | 22/22 | 179 | 30 | Yes |
-| cs | 215 | 22/22 | 184 | 30 | Yes |
-| ro | 215 | 22/22 | 184 | 30 | Yes |
+| zh-TW | 215 | 22/22 | 186 | 29 | Yes |
+| ja | 215 | 22/22 | 186 | 29 | Yes |
+| ko | 215 | 22/22 | 186 | 29 | Yes |
+| de | 215 | 22/22 | 181 | 29 | Yes |
+| fr | 215 | 22/22 | 177 | 29 | Yes |
+| es | 215 | 22/22 | 186 | 29 | Yes |
+| pt-BR | 215 | 22/22 | 186 | 29 | Yes |
+| ru | 215 | 22/22 | 186 | 29 | Yes |
+| it | 215 | 22/22 | 184 | 29 | Yes |
+| nl | 215 | 22/22 | 185 | 29 | Yes |
+| pl | 215 | 22/22 | 186 | 29 | Yes |
+| tr | 215 | 22/22 | 186 | 29 | Yes |
+| uk | 215 | 22/22 | 186 | 29 | Yes |
+| vi | 215 | 22/22 | 185 | 29 | Yes |
+| id | 215 | 22/22 | 186 | 29 | Yes |
+| th | 215 | 22/22 | 186 | 29 | Yes |
+| ar | 215 | 22/22 | 186 | 29 | Yes |
+| hi | 215 | 22/22 | 186 | 29 | Yes |
+| bn | 215 | 22/22 | 186 | 29 | Yes |
+| fa | 215 | 22/22 | 186 | 29 | Yes |
+| he | 215 | 22/22 | 186 | 29 | Yes |
+| sv | 215 | 22/22 | 181 | 29 | Yes |
+| cs | 215 | 22/22 | 186 | 29 | Yes |
+| ro | 215 | 22/22 | 186 | 29 | Yes |
 
 Run `bun run scripts/check-i18n.ts` to verify source coverage, catalog consistency, formatting placeholders, core coverage, and guide contents. Use `--write` to refresh this report. The machine-readable report lists every English fallback and shared value.
 
@@ -65,7 +65,6 @@ Run `bun run scripts/check-i18n.ts` to verify source coverage, catalog consisten
 - The management engine did not return a valid response
 - Settings save failed: %1
 - Settings save failed: {e:#}
-- Settings were saved, but restarting failed. Open AppimageMannger again.
 - Enter a valid absolute directory path
 - Choose an absolute path
 - Configuration load failed: {e:#}

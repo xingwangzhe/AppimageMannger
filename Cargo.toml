@@ -1,6 +1,6 @@
 [package]
 name = "appimage-mannger"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 rust-version = "1.98"
 description = "A native Linux AppImage manager built with Ely and GPUI"
@@ -26,6 +26,7 @@ futures = "0.3"
 env_logger = "0.11"
 log = "0.4"
 regex = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [profile.release]
 opt-level = 3

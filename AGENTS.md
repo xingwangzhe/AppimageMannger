@@ -23,7 +23,7 @@ AppimageMannger is a Linux desktop manager for AppImage applications. The main e
 - Application and documentation support 26 locales. Language selection must remain persistent in all three frontends. `system` resolves the current locale; unsupported locales use English.
 - Ely accepts only its own small exact locale-tag set. Use `i18n::ely_i18n` to map application locales safely and override shared Browse/Choose copy; unsupported Ely internal strings use English fallback. Never pass arbitrary application locale codes directly to `I18n::new`.
 - Preserve `{name}`, `{}`, `%1`, `%s`, and other format placeholders exactly. Run `bun run scripts/check-i18n.ts` after changing visible text or catalogs.
-- Diagnostic level names (`Error`, `Info`, `Warning`, `Debug`, `Trace`) and engine errors stay English. Do not translate application names, paths, repository identifiers, command names or logs as if they were UI labels.
+- Diagnostic level names (`Error`, `Info`, `Warning`, `Debug`, `Trace`) and engine errors stay English. Do not translate managed third-party application names, paths, repository identifiers, command names or logs as if they were UI labels. This manager's own display name is localized in all 26 catalogs and desktop Name entries; retain stable executable/package/configuration identifiers.
 - Maintain native-name language choices, RTL behavior for Arabic/Hebrew/Persian, and localized usage docs under `docs/i18n/`.
 
 ## Safety invariants
@@ -46,4 +46,4 @@ For a user-authorized release: build the local deb, install through `pkexec` whe
 - [AppImage engine and project logic](skills/appimage-manager-core/SKILL.md)
 - [Native Linux build, verification and release](skills/linux-native-release/SKILL.md)
 
-The final 1.0.0 handoff and verified results live in [the release record](docs/RELEASE-1.0.0.md).
+The 1.0.0 baseline lives in [the original release record](docs/RELEASE-1.0.0.md). The replacement-import, desktop integration, resizable-layout and localized-name fixes are recorded in [1.0.1](docs/RELEASE-1.0.1.md).

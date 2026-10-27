@@ -51,6 +51,8 @@ fn dispatch(request: &str) -> Result<Value> {
         );
         next.window_width = next.window_width.clamp(880.0, 7680.0);
         next.window_height = next.window_height.clamp(580.0, 4320.0);
+        ensure!(next.sidebar_fraction.is_finite(), "Invalid sidebar size");
+        next.sidebar_fraction = next.sidebar_fraction.clamp(0.15, 0.7);
         for repo in next.repositories.values_mut() {
             *repo = manager::normalize_repository(repo)?;
         }
@@ -146,6 +148,7 @@ pub fn launch_if_native(style: WindowStyle) -> Result<()> {
     if let Some(path) = packaged.filter(|p| p.is_file()) {
         let error = Command::new(path)
             .env("APPIMAGE_MAN_NGER_ENGINE", &engine)
+            .env("APPIMAGE_MAN_NGER_ICON", manager::self_icon_path()?)
             .exec();
         return Err(error).context("Failed to launch native toolkit frontend");
     }
@@ -164,6 +167,7 @@ pub fn launch_if_native(style: WindowStyle) -> Result<()> {
     temp.persist(&target).map_err(|e| e.error)?;
     let error = Command::new(target)
         .env("APPIMAGE_MAN_NGER_ENGINE", std::env::current_exe()?)
+        .env("APPIMAGE_MAN_NGER_ICON", manager::self_icon_path()?)
         .exec();
     Err(error).context("Failed to launch native toolkit frontend")
 }

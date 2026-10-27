@@ -10,11 +10,15 @@ AppimageMannger is a Rust 2024 Linux application whose default frontend uses Ely
 
 Configuration lives under `$XDG_CONFIG_HOME/appimage-mannger/config.json`; missing XDG variables use the standard home directories. Applications live in `~/Applications` by default. Changing this setting selects another library and does not move files. Scan never launches an AppImage. Import copies instead of moving the source file. Uninstall keeps user application data and moves the executable to Trash. The manager never needs a persistent privileged daemon.
 
-Updates need embedded `gh-releases-zsync` information, a supported desktop repository field, or an explicitly entered GitHub owner/repository. Unknown or non-semver current versions produce an explanatory result instead of guessing whether a download is newer. Non-GitHub update protocols are displayed as metadata but are not silently treated as supported.
+Updates need embedded `gh-releases-zsync` information (the AppImage protocol name, not a CLI dependency), a supported desktop repository field, or an explicitly entered GitHub owner/repository. Public HTTPS Release pages resolve the latest stable tag and asset links/digests. The anonymous API is a fallback only; neither gh nor authentication is required by clients. Unknown or non-semver current versions produce an explanatory result instead of guessing whether a download is newer. Non-GitHub update protocols are displayed as metadata but are not silently treated as supported.
 
 Latest GitHub stable releases exclude prereleases. Both the asset name and downloaded ELF architecture are checked. A successful update retains the old binary in the manager's XDG data backup directory. An upstream GitHub SHA-256 digest is checked when provided; without one the app can validate format and transfer size but cannot claim independent publisher authenticity.
 
 CodeGraph index is local in `.codegraph/` and ignored by Git. Run `codegraph init -y .` after cloning and `codegraph sync .` after edits.
+
+Imports match embedded application IDs/names or version-independent filenames, while preserving architecture and repository boundaries. A library file lock serializes mutations. Replacement keeps the installed path/configuration stable, backs up previous versions in freedesktop Trash, replaces atomically and restores binaries/launchers on failure. Sources stay in place. MIME registration advertises `--import %F` for AppImage Open With and supplies the GTK application-ID desktop alias. The alias does not duplicate MIME handlers.
+
+The application display name is localized in all 26 catalogs and desktop Name entries. Executable names, package IDs, repository URLs and configuration paths keep their stable identifiers. All three toolkits share a persistent sidebar fraction; GPUI uses Ely SplitPane, Qt uses QSplitter and GTK uses GtkPaned.
 
 ## Native toolkit selection
 

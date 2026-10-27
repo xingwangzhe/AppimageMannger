@@ -55,6 +55,9 @@ for (const file of frontendElfs) {
 const applicationElfs = [binary, ...frontendElfs];
 install("packaging/appimage-mannger.desktop", join(stage, "usr/share/applications/appimage-mannger.desktop"));
 install("packaging/appimage-mannger.svg", join(stage, "usr/share/icons/hicolor/scalable/apps/appimage-mannger.svg"));
+install("packaging/appimage-mannger.png", join(stage, "usr/share/icons/hicolor/256x256/apps/appimage-mannger.png"));
+install("packaging/appimage-mannger.xml", join(stage, "usr/share/mime/packages/appimage-mannger.xml"));
+text(join(stage, "usr/share/applications/io.github.xingwangzhe.AppimageMannger.desktop"), readFileSync("packaging/appimage-mannger.desktop", "utf8").split("\n").filter(line => !line.startsWith("MimeType=")).join("\n") + "\nNoDisplay=true\n");
 collectProjectLicenses(join(stage, "usr/share/licenses/appimage-mannger"), root);
 install("docs/THIRD-PARTY-NOTICES.md", join(stage, "usr/share/doc/appimage-mannger/THIRD-PARTY-NOTICES.md"));
 text(join(stage, "usr/share/doc/appimage-mannger/copyright"), `AppimageMannger ${version}\nCopyright 2026 xingwangzhe\nProject license: ${projectLicense}\nDependency notices are retained under /usr/share/licenses/appimage-mannger/.\n\n${readFileSync("LICENSE", "utf8")}`);
@@ -68,8 +71,8 @@ if (formats.includes("deb")) {
   const deps = run(["dpkg-shlibdeps", "--ignore-missing-info", "-O", "-e" + binary, "-e"+join(stage,"usr/lib/appimage-mannger/frontend-qt"), "-e"+join(stage,"usr/lib/appimage-mannger/frontend-gnome")], work).trim().replace(/^shlibs:Depends=/, "");
   text(join(stage, "DEBIAN/control"), `Package: appimage-mannger\nVersion: ${packageVersion}\nSection: utils\nPriority: optional\nX-License: AGPL-3.0-only\nArchitecture: ${debArch}\nMaintainer: xingwangzhe <xingwangzhe@outlook.com>\nHomepage: https://github.com/xingwangzhe/AppimageMannger\nDepends: ${deps || "libc6, libfontconfig1, libxkbcommon0, libxkbcommon-x11-0"}, libvulkan1, squashfs-tools, xdg-utils, qt6-qpa-plugins, qt6-wayland\nDescription: AppimageMannger native Linux AppImage manager\n Manage AppImage applications, desktop integration, updates, and installation folders.\n Includes native Qt Widgets and GTK4/libadwaita frontends and the Ely/GPUI interface.\n`);
   // The package manager's normal triggers update icon/desktop caches; no privileges at runtime.
-  text(join(stage, "DEBIAN/triggers"), "interest-noawait /usr/share/applications\ninterest-noawait /usr/share/icons/hicolor\n");
-  text(join(stage, "DEBIAN/postinst"), "#!/bin/sh\nset -e\nif command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/share/applications || true; fi\nif command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true; fi\n", 0o755);
+  text(join(stage, "DEBIAN/triggers"), "interest-noawait /usr/share/applications\ninterest-noawait /usr/share/icons/hicolor\ninterest-noawait /usr/share/mime\n");
+  text(join(stage, "DEBIAN/postinst"), "#!/bin/sh\nset -e\nif command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database /usr/share/applications || true; fi\nif command -v update-mime-database >/dev/null 2>&1; then update-mime-database /usr/share/mime || true; fi\nif command -v gtk-update-icon-cache >/dev/null 2>&1; then gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true; fi\n", 0o755);
   const file = join(out, `appimage-mannger_${packageVersion}_${debArch}.deb`);
   run(["dpkg-deb", "--root-owner-group", "--build", stage, file]); made.push(file);
   rmSync(join(stage, "DEBIAN"), { recursive: true });
@@ -78,7 +81,7 @@ if (formats.includes("rpm")) {
   const top = join(work, "rpmbuild");
   for (const dir of ["BUILD", "BUILDROOT", "RPMS", "SOURCES", "SPECS", "SRPMS"]) mkdirSync(join(top, dir), { recursive: true });
   const spec = join(top, "SPECS/appimage-mannger.spec");
-  text(spec, `Name: appimage-mannger\nVersion: ${packageVersion}\nRelease: 1\nSummary: Native Linux AppImage manager built with Ely and GPUI\nLicense: AGPL-3.0-only\nURL: https://github.com/xingwangzhe/AppimageMannger\nBuildArch: ${arch}\nRequires: squashfs-tools\nRequires: xdg-utils\nRequires: libQt6WaylandClient.so.6()(64bit)\nRequires: libvulkan.so.1()(64bit)\n%global __os_install_post %{nil}\n%global debug_package %{nil}\n\n%description\nManage AppImage applications, desktop integration, updates, and installation folders.\n\n%install\nmkdir -p %{buildroot}\ncp -a "${stage}/usr" %{buildroot}/\n\n%files\n/usr/bin/appimage-mannger\n/usr/lib/appimage-mannger/\n/usr/share/applications/appimage-mannger.desktop\n/usr/share/icons/hicolor/scalable/apps/appimage-mannger.svg\n%license /usr/share/licenses/appimage-mannger/\n${existsSync("README.md") ? "%doc /usr/share/doc/appimage-mannger/\n" : ""}`);
+  text(spec, `Name: appimage-mannger\nVersion: ${packageVersion}\nRelease: 1\nSummary: Native Linux AppImage manager built with Ely and GPUI\nLicense: AGPL-3.0-only\nURL: https://github.com/xingwangzhe/AppimageMannger\nBuildArch: ${arch}\nRequires: squashfs-tools\nRequires: xdg-utils\nRequires: libQt6WaylandClient.so.6()(64bit)\nRequires: libvulkan.so.1()(64bit)\n%global __os_install_post %{nil}\n%global debug_package %{nil}\n\n%description\nManage AppImage applications, desktop integration, updates, and installation folders.\n\n%install\nmkdir -p %{buildroot}\ncp -a "${stage}/usr" %{buildroot}/\n\n%files\n/usr/bin/appimage-mannger\n/usr/lib/appimage-mannger/\n/usr/share/applications/appimage-mannger.desktop\n/usr/share/applications/io.github.xingwangzhe.AppimageMannger.desktop\n/usr/share/mime/packages/appimage-mannger.xml\n/usr/share/icons/hicolor/scalable/apps/appimage-mannger.svg\n/usr/share/icons/hicolor/256x256/apps/appimage-mannger.png\n%license /usr/share/licenses/appimage-mannger/\n${existsSync("README.md") ? "%doc /usr/share/doc/appimage-mannger/\n" : ""}`);
   run(["rpmbuild", "--define", `_topdir ${top}`, "-bb", spec]);
   const file = join(out, `appimage-mannger-${packageVersion}-1.${arch}.rpm`);
   install(join(top, `RPMS/${arch}/appimage-mannger-${packageVersion}-1.${arch}.rpm`), file); made.push(file);
@@ -86,7 +89,7 @@ if (formats.includes("rpm")) {
 if (formats.includes("tar")) {
   const archiveRoot = join(work, name); mkdirSync(archiveRoot, { recursive: true });
   cpSync(join(stage, "usr"), join(archiveRoot, "usr"), { recursive: true });
-  text(join(archiveRoot, "install.sh"), '#!/bin/sh\nset -eu\nprefix="${PREFIX:-$HOME/.local}"\ncd "$(dirname "$0")"\nmkdir -p "$prefix"\ncp -R usr/. "$prefix/"\nif command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$prefix/share/applications" || true; fi\nprintf "Installed in %s; ensure %s/bin is in PATH.\\n" "$prefix" "$prefix"\n', 0o755);
+  text(join(archiveRoot, "install.sh"), '#!/bin/sh\nset -eu\nprefix="${PREFIX:-$HOME/.local}"\ncd "$(dirname "$0")"\nmkdir -p "$prefix"\ncp -R usr/. "$prefix/"\nif command -v update-desktop-database >/dev/null 2>&1; then update-desktop-database "$prefix/share/applications" || true; fi\nif command -v update-mime-database >/dev/null 2>&1; then update-mime-database "$prefix/share/mime" || true; fi\nprintf "Installed in %s; ensure %s/bin is in PATH.\\n" "$prefix" "$prefix"\n', 0o755);
   const file = join(out, name + ".tar.gz"); run(["tar", "-czf", file, "-C", work, name]); made.push(file);
 }
 if (formats.includes("arch")) {

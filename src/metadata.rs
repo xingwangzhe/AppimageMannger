@@ -18,6 +18,51 @@ const PROCESS_TIMEOUT: Duration = Duration::from_secs(3);
 const IMAGE_TIMEOUT: Duration = Duration::from_secs(8);
 const ELF_SEARCH_LIMIT: usize = 1024 * 1024;
 
+/// Read identity/version from the embedded desktop entry without executing it.
+pub fn embedded_desktop(path: &Path) -> Option<std::collections::BTreeMap<String, String>> {
+    let metadata = fs::metadata(path).ok()?;
+    let key = hex::encode(Sha256::digest(
+        format!(
+            "{}:{}:{:?}",
+            path.display(),
+            metadata.len(),
+            metadata.modified().ok()?
+        )
+        .as_bytes(),
+    ));
+    let cache = dirs::cache_dir()?.join("appimage-mannger/metadata");
+    let cached = cache.join(format!("{key}.json"));
+    if let Ok(bytes) = fs::read(&cached) {
+        return serde_json::from_slice(&bytes).ok();
+    }
+    let offset = squashfs_offset(path)?;
+    let listing = squashfs_command(path, offset, &["-ll", "-max-depth", "1"], &[], TEXT_LIMIT)?;
+    for line in std::str::from_utf8(&listing).ok()?.lines().take(128) {
+        let Some((_, entry)) = line.split_once(" squashfs-root/") else {
+            continue;
+        };
+        if !entry.ends_with(".desktop") || entry.contains(" -> ") {
+            continue;
+        }
+        let bytes = cat_entry(path, offset, &safe_relative_path(entry)?, TEXT_LIMIT)?;
+        let mut values = std::collections::BTreeMap::new();
+        let mut active = false;
+        for line in std::str::from_utf8(&bytes).ok()?.lines() {
+            if line.starts_with('[') {
+                active = line == "[Desktop Entry]";
+            } else if active && let Some((key, value)) = line.split_once('=') {
+                values.insert(key.to_owned(), value.to_owned());
+            }
+        }
+        fs::create_dir_all(&cache).ok()?;
+        let mut temp = tempfile::NamedTempFile::new_in(&cache).ok()?;
+        temp.write_all(&serde_json::to_vec(&values).ok()?).ok()?;
+        temp.persist(cached).ok()?;
+        return Some(values);
+    }
+    None
+}
+
 /// Resolve a desktop icon first, then the AppImage's embedded icon.
 ///
 /// Call once during background scanning, not from the render method. `None`

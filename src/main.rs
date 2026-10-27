@@ -9,6 +9,11 @@ mod update;
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|a| a == "--repair-registration") {
+        manager::repair_registration()?;
+        println!("AppImage Open With registration repaired");
+        return Ok(());
+    }
     if args.first().is_some_and(|a| a == "--rpc") {
         println!(
             "{}",
@@ -30,7 +35,7 @@ fn main() -> anyhow::Result<()> {
     }
     if args.iter().any(|a| a == "--help") {
         println!(
-            "AppimageMannger — Ely GPUI AppImage manager\n\nUsage: appimage-mannger [--list | --smoke-test] [--directory PATH]\n\nNo arguments opens the desktop application. --list prints the managed apps as JSON.\n--smoke-test checks installation and scans without launching or modifying applications."
+            "AppimageMannger — AppImage manager\n\nUsage: appimage-mannger [--import [FILE...]]\n       appimage-mannger [--list | --smoke-test] [--directory PATH]\n       appimage-mannger --repair-registration\n\nNo arguments opens the desktop application. --import installs files, replacing existing versions, then opens the selected frontend. --list prints the managed apps as JSON.\n--smoke-test scans without launching or modifying applications.\n--repair-registration restores AppImage Open With support."
         );
         return Ok(());
     }
@@ -52,8 +57,19 @@ fn main() -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    if !args.is_empty() {
+    if args.first().is_some_and(|a| a == "--import") {
+        let mut config = manager::Config::load()?;
+        for path in args.iter().skip(1) {
+            let app =
+                manager::import_app(&config, &std::path::PathBuf::from(path).canonicalize()?)?;
+            config.last_selected_path = Some(app.path);
+        }
+        config.save()?;
+    } else if !args.is_empty() {
         anyhow::bail!("Unknown argument. Use --help.");
+    }
+    if let Err(error) = manager::repair_registration() {
+        log::warn!("Desktop registration: {error:#}");
     }
     frontends::launch_if_native(manager::Config::load().unwrap_or_default().window_style)?;
     ui::run();

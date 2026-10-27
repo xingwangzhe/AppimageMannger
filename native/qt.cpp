@@ -12,6 +12,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFileDialog>
+#include <QFile>
 #include <QFileInfo>
 #include <QFont>
 #include <QFormLayout>
@@ -160,7 +161,7 @@ private:
         connect(process, &QProcess::errorOccurred, this, [process, complete](QProcess::ProcessError error) {
             if (error == QProcess::FailedToStart) complete(false, QStringLiteral("Could not start the Rust engine: %1").arg(process->errorString()));
         });
-        QTimer::singleShot(360000, process, [process, done] {
+        QTimer::singleShot(request->payload.value("action").toString() == "install_update" ? 1860000 : 360000, process, [process, done] {
             if (!*done && process->state() != QProcess::NotRunning) {
                 process->setProperty("rpc_error", QStringLiteral("Operation timed out; check the network connection and retry"));
                 process->kill();
@@ -189,12 +190,15 @@ QLabel *plainLabel(const QString &text = {}) {
 class ManagerWindow final : public QMainWindow {
 public:
     explicit ManagerWindow(const QString &engine) : client_(engine, this) {
-        setWindowTitle(QStringLiteral("AppimageMannger · Qt"));
-        setWindowIcon(QIcon::fromTheme(QStringLiteral("application-x-executable")));
+        setWindowTitle(T("AppimageMannger 管理器"));
+        setWindowIcon(QIcon(qEnvironmentVariable("APPIMAGE_MAN_NGER_ICON")));
         setMinimumSize(920, 620);
         resize(1180, 780);
         buildMenus();
         buildLayout();
+        progressTimer_.setInterval(350);
+        connect(&progressTimer_, &QTimer::timeout, this, [this] { showDownloadProgress(); });
+        progressTimer_.start();
         saveTimer_.setSingleShot(true);
         saveTimer_.setInterval(300);
         connect(&saveTimer_, &QTimer::timeout, this, [this] { saveConfig(); });
@@ -234,8 +238,10 @@ private:
     quint64 configRevision_ = 0, persistedRevision_ = 0;
     QString version_, selectedPath_;
     QJsonArray locales_;
-    QTimer saveTimer_, geometryTimer_;
+    QTimer saveTimer_, geometryTimer_, progressTimer_;
+    QLabel *downloadProgress_ = nullptr;
     QListWidget *list_ = nullptr;
+    QSplitter *splitter_ = nullptr;
     QLineEdit *search_ = nullptr, *repository_ = nullptr;
     QLabel *count_ = nullptr, *directory_ = nullptr, *name_ = nullptr, *summary_ = nullptr, *icon_ = nullptr;
     QLabel *versionLabel_ = nullptr, *sizeLabel_ = nullptr, *architecture_ = nullptr, *path_ = nullptr, *updateStatus_ = nullptr;
@@ -270,6 +276,8 @@ private:
         });
     }
     void rememberGeometry() {
+        const auto sizes = splitter_->sizes();
+        if (sizes.size() == 2 && sizes[0] + sizes[1] > 0) config_["sidebar_fraction"] = double(sizes[0]) / (sizes[0] + sizes[1]);
         config_["maximized"] = isMaximized();
         if (!isMaximized()) { config_["window_width"] = width(); config_["window_height"] = height(); }
         ++configRevision_;
@@ -279,15 +287,36 @@ private:
         const int width = qBound(920, config_.value("window_width").toInt(1180), qMax(920, available.width()));
         const int height = qBound(620, config_.value("window_height").toInt(780), qMax(620, available.height()));
         resize(width, height);
+        const double fraction = config_.value("sidebar_fraction").toDouble(0.27);
+        splitter_->setSizes({int(width * fraction), int(width * (1 - fraction))});
         if (config_.value("maximized").toBool(false)) showMaximized();
     }
     void setBusy(bool busy, const QString &message = {}) {
         busy_ = busy;
+        progress_->setRange(0,0);
+        downloadProgress_->hide();
         progress_->setVisible(busy);
         importAction_->setEnabled(!busy);
         refreshAction_->setEnabled(!busy);
         refreshButtons();
         if (!message.isEmpty()) statusBar()->showMessage(message);
+    }
+    void showDownloadProgress() {
+        if (!busy_) return;
+        const auto path = selectedApp().value("update_progress_path").toString();
+        if (path.isEmpty()) return;
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly) || file.size()>4096) return;
+        const auto data = QJsonDocument::fromJson(file.readAll()).object();
+        if (!data.contains("downloaded")) return;
+        const double downloaded=data.value("downloaded").toDouble(), total=data.value("total").toDouble();
+        const QString amount=byteSize(downloaded);
+        if (total>0) {
+            const int percent=qBound(0,int(downloaded*1000/total),1000);
+            progress_->setRange(0,1000);progress_->setValue(percent);
+            downloadProgress_->setText(QStringLiteral("%1% · %2 / %3").arg(percent/10.0,0,'f',1).arg(amount,byteSize(total)));
+        } else { progress_->setRange(0,0);downloadProgress_->setText(amount); }
+        downloadProgress_->show();
     }
     void refreshButtons() {
         const bool exists = !selectedApp().isEmpty();
@@ -331,6 +360,9 @@ private:
     }
     void buildLayout() {
         auto *splitter = new QSplitter(Qt::Horizontal, this);
+        splitter_ = splitter;
+        splitter->setHandleWidth(8);
+        connect(splitter, &QSplitter::splitterMoved, this, [this] { if (ready_) { rememberGeometry(); changed(); } });
         splitter->setChildrenCollapsible(false);
         auto *sidebar = new QWidget;
         sidebar->setMinimumWidth(255);
@@ -432,7 +464,8 @@ private:
         });
         right->addStretch(); scroll->setWidget(body); details_->addWidget(scroll);
         splitter->addWidget(details_); splitter->setStretchFactor(0, 0); splitter->setStretchFactor(1, 1); splitter->setSizes({300, 880}); setCentralWidget(splitter);
-        progress_ = new QProgressBar; progress_->setRange(0, 0); progress_->setFixedWidth(130); progress_->setMaximumHeight(13); progress_->hide(); statusBar()->addPermanentWidget(progress_);
+        progress_ = new QProgressBar; progress_->setRange(0, 0); progress_->setFixedWidth(130); progress_->setMaximumHeight(13); progress_->setTextVisible(false); progress_->hide(); statusBar()->addPermanentWidget(progress_);
+        downloadProgress_ = new QLabel; downloadProgress_->hide(); statusBar()->addPermanentWidget(downloadProgress_);
         refreshButtons();
     }
     void applyAppearance() {
@@ -479,6 +512,8 @@ private:
                 auto qtLocale = locale; qtLocale.replace('-', '_');
                 if (qtStandardTranslator.load("qtbase_" + qtLocale, QLibraryInfo::path(QLibraryInfo::TranslationsPath))) qApp->installTranslator(&qtStandardTranslator);
                 retranslateTree(this);
+                QApplication::setApplicationDisplayName(T("AppimageMannger 管理器"));
+                setWindowTitle(T("AppimageMannger 管理器"));
             }
             if (first) { applyAppearance(); restoreGeometry(); show(); }
             ready_ = true;
@@ -643,8 +678,10 @@ private:
 int main(int argc, char **argv) {
     QApplication application(argc, argv);
     application.setApplicationName(QStringLiteral("AppimageMannger"));
-    application.setApplicationDisplayName(QStringLiteral("AppimageMannger"));
+    application.setApplicationDisplayName(T("AppimageMannger 管理器"));
     application.setOrganizationName(QStringLiteral("xingwangzhe"));
+    application.setDesktopFileName(QStringLiteral("appimage-mannger"));
+    application.setWindowIcon(QIcon(qEnvironmentVariable("APPIMAGE_MAN_NGER_ICON")));
     application.setQuitOnLastWindowClosed(true);
     // Fusion is a real Qt widget style, with a consistent light/dark palette.
     if (auto *style = QStyleFactory::create(QStringLiteral("Fusion"))) application.setStyle(style);

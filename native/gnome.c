@@ -53,6 +53,7 @@ struct State {
     AdwApplication *application;
     GtkWindow *window;
     GtkWidget *content, *list, *search, *count, *status, *spinner;
+    GtkWidget *progress;
     GtkWidget *detail, *detail_scroll, *empty, *title, *version, *description, *location;
     GtkWidget *icon, *repository, *update_text, *install_button;
     GtkWindow *settings;
@@ -130,6 +131,8 @@ static void remember_geometry(State *s) {
     JsonObject *c=configuration(s); if (!c || !s->window) return;
     gboolean maximized=gtk_window_is_maximized(s->window);
     json_object_set_boolean_member(c,"maximized",maximized);
+    int content_width=gtk_widget_get_width(s->content);
+    if(content_width>0) json_object_set_double_member(c,"sidebar_fraction",(double)gtk_paned_get_position(GTK_PANED(s->content))/content_width);
     if (!maximized) {
         int w=gtk_widget_get_width(GTK_WIDGET(s->window)), h=gtk_widget_get_height(GTK_WIDGET(s->window));
         if (w>=880 && h>=580) { json_object_set_double_member(c,"window_width",w); json_object_set_double_member(c,"window_height",h); }
@@ -266,6 +269,7 @@ static void scan_reply(State *s,JsonNode *data,gpointer user_data) {
         gtk_widget_set_default_direction(g_str_has_prefix(locale,"ar")||g_str_has_prefix(locale,"he")||g_str_has_prefix(locale,"fa")||g_str_has_prefix(locale,"ur")?GTK_TEXT_DIR_RTL:GTK_TEXT_DIR_LTR);
         retranslate_tree(GTK_WIDGET(s->window));
         g_object_set(s->search,"placeholder-text",tr_text("搜索应用名称…"),NULL);
+        gtk_window_set_title(s->window,tr_text("AppimageMannger 管理器"));g_set_application_name(tr_text("AppimageMannger 管理器"));adw_window_title_set_title(ADW_WINDOW_TITLE(s->header_title),tr_text("AppimageMannger 管理器"));
         adw_window_title_set_subtitle(ADW_WINDOW_TITLE(s->header_title),tr_text("AppImage 应用管理器"));
         adw_status_page_set_title(ADW_STATUS_PAGE(s->empty),tr_text("让应用各就其位"));
         adw_status_page_set_description(ADW_STATUS_PAGE(s->empty),tr_text("导入 AppImage，或在设置中选择已有应用目录。"));
@@ -301,6 +305,8 @@ static void scan_reply(State *s,JsonNode *data,gpointer user_data) {
         int w=(int)json_object_get_double_member(configuration(s),"window_width");int h=(int)json_object_get_double_member(configuration(s),"window_height");
         if (!gtk_widget_get_realized(GTK_WIDGET(s->window)) || !g_object_get_data(G_OBJECT(s->window),"size-restored")) {
             gtk_window_set_default_size(s->window,MAX(w,880),MAX(h,580));
+            double fraction=json_object_has_member(configuration(s),"sidebar_fraction")?json_object_get_double_member(configuration(s),"sidebar_fraction"):0.27;
+            gtk_paned_set_position(GTK_PANED(s->content),(int)(MAX(w,880)*fraction));
             if (bool_member(configuration(s),"maximized")) gtk_window_maximize(s->window);
             g_object_set_data(G_OBJECT(s->window),"size-restored",GINT_TO_POINTER(1));
         }
@@ -466,26 +472,49 @@ static void show_settings(State *s) {
 static void on_settings(GtkButton *b,gpointer data){(void)b;show_settings(data);}
 static void on_about(GtkButton *b,gpointer data) {
     (void)b;State *s=data;const gchar *developers[]={"xingwangzhe <xingwangzhe@outlook.com>",NULL};
-    GtkWidget *about=adw_about_window_new();adw_about_window_set_application_name(ADW_ABOUT_WINDOW(about),"AppimageMannger");adw_about_window_set_application_icon(ADW_ABOUT_WINDOW(about),"appimage-mannger");
+    GtkWidget *about=adw_about_window_new();adw_about_window_set_application_name(ADW_ABOUT_WINDOW(about),tr_text("AppimageMannger 管理器"));adw_about_window_set_application_icon(ADW_ABOUT_WINDOW(about),"appimage-mannger");
     adw_about_window_set_developer_name(ADW_ABOUT_WINDOW(about),"xingwangzhe");adw_about_window_set_developers(ADW_ABOUT_WINDOW(about),developers);
     adw_about_window_set_version(ADW_ABOUT_WINDOW(about),s->application_version?s->application_version:"");adw_about_window_set_license_type(ADW_ABOUT_WINDOW(about),GTK_LICENSE_AGPL_3_0_ONLY);adw_about_window_set_website(ADW_ABOUT_WINDOW(about),"https://github.com/xingwangzhe/AppimageMannger");
     adw_about_window_set_comments(ADW_ABOUT_WINDOW(about),tr_text("使用真实 GTK4 / libadwaita 原生界面与共享 Rust 管理引擎。"));gtk_window_set_transient_for(GTK_WINDOW(about),s->window);gtk_window_present(GTK_WINDOW(about));
 }
 static void quit_reply(State *s,JsonNode *data,gpointer user_data){(void)data;(void)user_data;g_application_quit(G_APPLICATION(s->application));}
 static gboolean close_window(GtkWindow *window,gpointer data){(void)window;State *s=data;if(s->closing)return TRUE;if(!s->config)return FALSE;s->closing=TRUE;if(s->save_timer){g_source_remove(s->save_timer);s->save_timer=0;}remember_geometry(s);save_config(s,tr_text("正在保存窗口状态…"),quit_reply,NULL);return TRUE;}
+static void pane_changed(GObject *object,GParamSpec *spec,gpointer data){(void)object;(void)spec;State *s=data;if(!s->config||s->building||s->closing)return;remember_geometry(s);schedule_save(s);}
+static gboolean show_download_progress(gpointer data) {
+    State *s=data;JsonObject *app=selected_app(s);gchar *bytes=NULL;gsize length=0;
+    const gchar *path=app?string_member(app,"update_progress_path"):"";
+    if(!s->running||!*path||!g_file_get_contents(path,&bytes,&length,NULL)){gtk_widget_set_visible(s->progress,FALSE);return G_SOURCE_CONTINUE;}
+    JsonParser *parser=json_parser_new();
+    if(length<=4096&&json_parser_load_from_data(parser,bytes,(gssize)length,NULL)) {
+        JsonNode *root=json_parser_get_root(parser);
+        if(JSON_NODE_HOLDS_OBJECT(root)) {
+            JsonObject *progress=json_node_get_object(root);
+            double downloaded=json_object_get_double_member(progress,"downloaded");
+            JsonNode *total_node=json_object_get_member(progress,"total");
+            double total=total_node&&!JSON_NODE_HOLDS_NULL(total_node)?json_node_get_double(total_node):0;
+            gchar *amount=g_format_size((guint64)downloaded),*text=NULL;
+            if(total>0){gchar *size=g_format_size((guint64)total);double fraction=CLAMP(downloaded/total,0,1);gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(s->progress),fraction);text=g_strdup_printf("%.1f%% · %s / %s",fraction*100,amount,size);g_free(size);}
+            else {gtk_progress_bar_pulse(GTK_PROGRESS_BAR(s->progress));text=g_strdup(amount);}
+            gtk_progress_bar_set_text(GTK_PROGRESS_BAR(s->progress),text);gtk_widget_set_visible(s->progress,TRUE);g_free(amount);g_free(text);
+        }
+    }
+    g_object_unref(parser);g_free(bytes);return G_SOURCE_CONTINUE;
+}
 static void on_action(GSimpleAction *action,GVariant *parameter,gpointer data){(void)parameter;State *s=data;const gchar *name=g_action_get_name(G_ACTION(action));if(g_str_equal(name,"settings"))show_settings(s);else if(g_str_equal(name,"about"))on_about(NULL,s);else if(g_str_equal(name,"refresh"))scan(s);else if(g_str_equal(name,"import"))on_import(NULL,s);else if(g_str_equal(name,"folder"))on_folder(NULL,s);else if(g_str_equal(name,"quit"))gtk_window_close(s->window);}
 static GtkWidget *section(GtkWidget *parent,const gchar *heading) {
     GtkWidget *frame=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);margins(frame,20);GtkWidget *wrapper=gtk_frame_new(NULL);gtk_frame_set_child(GTK_FRAME(wrapper),frame);gtk_box_append(GTK_BOX(frame),label_new(heading,"heading"));gtk_box_append(GTK_BOX(parent),wrapper);return frame;
 }
 static void activate(GApplication *application,gpointer data) {
+    const gchar *brand_icon=g_getenv("APPIMAGE_MAN_NGER_ICON");
+    if(brand_icon){gchar *folder=g_path_get_dirname(brand_icon);gtk_icon_theme_add_search_path(gtk_icon_theme_get_for_display(gdk_display_get_default()),folder);g_free(folder);}
     State *s=data;if(s->window){gtk_window_present(s->window);return;}
-    s->application=ADW_APPLICATION(application);s->window=GTK_WINDOW(adw_application_window_new(GTK_APPLICATION(application)));gtk_window_set_title(s->window,"AppimageMannger");gtk_window_set_icon_name(s->window,"appimage-mannger");gtk_window_set_default_size(s->window,1160,800);gtk_widget_set_size_request(GTK_WIDGET(s->window),880,580);
+    s->application=ADW_APPLICATION(application);s->window=GTK_WINDOW(adw_application_window_new(GTK_APPLICATION(application)));gtk_window_set_title(s->window,tr_text("AppimageMannger 管理器"));gtk_window_set_icon_name(s->window,"appimage-mannger");gtk_window_set_default_size(s->window,1160,800);gtk_widget_set_size_request(GTK_WIDGET(s->window),880,580);
     g_signal_connect(s->window,"close-request",G_CALLBACK(close_window),s);
     GtkWidget *root=gtk_box_new(GTK_ORIENTATION_VERTICAL,0);adw_application_window_set_content(ADW_APPLICATION_WINDOW(s->window),root);
-    GtkWidget *header=adw_header_bar_new();adw_header_bar_set_decoration_layout(ADW_HEADER_BAR(header),":minimize,maximize,close");s->header_title=adw_window_title_new("AppimageMannger",tr_text("AppImage 应用管理器"));adw_header_bar_set_title_widget(ADW_HEADER_BAR(header),s->header_title);gtk_box_append(GTK_BOX(root),header);
+    GtkWidget *header=adw_header_bar_new();adw_header_bar_set_decoration_layout(ADW_HEADER_BAR(header),":minimize,maximize,close");s->header_title=adw_window_title_new(tr_text("AppimageMannger 管理器"),tr_text("AppImage 应用管理器"));adw_header_bar_set_title_widget(ADW_HEADER_BAR(header),s->header_title);gtk_box_append(GTK_BOX(root),header);
     GMenu *menu=g_menu_new();s->menu=menu;g_menu_append(menu,tr_text("设置"),"app.settings");g_menu_append(menu,tr_text("打开应用目录"),"app.folder");g_menu_append(menu,tr_text("关于"),"app.about");g_menu_append(menu,tr_text("退出"),"app.quit");GtkWidget *menubutton=gtk_menu_button_new();gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(menubutton),"open-menu-symbolic");gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(menubutton),G_MENU_MODEL(menu));adw_header_bar_pack_start(ADW_HEADER_BAR(header),menubutton);/* State retains menu for retranslation after scan. */
     GtkWidget *refresh=button_new(tr_text("刷新"),"view-refresh-symbolic",G_CALLBACK(on_refresh),s);adw_header_bar_pack_end(ADW_HEADER_BAR(header),refresh);GtkWidget *import=button_new(tr_text("导入"),"list-add-symbolic",G_CALLBACK(on_import),s);gtk_widget_add_css_class(import,"suggested-action");adw_header_bar_pack_end(ADW_HEADER_BAR(header),import);
-    s->content=gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);gtk_widget_set_vexpand(s->content,TRUE);gtk_paned_set_position(GTK_PANED(s->content),290);gtk_box_append(GTK_BOX(root),s->content);
+    s->content=gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);gtk_paned_set_wide_handle(GTK_PANED(s->content),TRUE);gtk_paned_set_shrink_start_child(GTK_PANED(s->content),FALSE);gtk_paned_set_shrink_end_child(GTK_PANED(s->content),FALSE);gtk_widget_set_vexpand(s->content,TRUE);gtk_paned_set_position(GTK_PANED(s->content),290);gtk_box_append(GTK_BOX(root),s->content);g_signal_connect(s->content,"notify::position",G_CALLBACK(pane_changed),s);
     GtkWidget *sidebar=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);gtk_widget_set_size_request(sidebar,260,-1);margins(sidebar,16);s->count=label_new(tr_text("已安装的应用"),"heading");gtk_box_append(GTK_BOX(sidebar),s->count);s->search=gtk_search_entry_new();g_object_set(s->search,"placeholder-text",tr_text("搜索应用名称…"),NULL);gtk_box_append(GTK_BOX(sidebar),s->search);
     s->list=gtk_list_box_new();gtk_list_box_set_selection_mode(GTK_LIST_BOX(s->list),GTK_SELECTION_SINGLE);gtk_widget_add_css_class(s->list,"navigation-sidebar");gtk_list_box_set_filter_func(GTK_LIST_BOX(s->list),row_filter,s,NULL);g_signal_connect(s->list,"row-selected",G_CALLBACK(on_selected),s);g_signal_connect(s->search,"search-changed",G_CALLBACK(on_search),s);
     GtkWidget *list_scroll=gtk_scrolled_window_new();gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(list_scroll),GTK_POLICY_NEVER,GTK_POLICY_AUTOMATIC);gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(list_scroll),s->list);gtk_widget_set_vexpand(list_scroll,TRUE);gtk_box_append(GTK_BOX(sidebar),list_scroll);gtk_box_append(GTK_BOX(sidebar),button_new(tr_text("设置与导入"),"emblem-system-symbolic",G_CALLBACK(on_settings),s));gtk_paned_set_start_child(GTK_PANED(s->content),sidebar);gtk_paned_set_resize_start_child(GTK_PANED(s->content),FALSE);
@@ -497,11 +526,11 @@ static void activate(GApplication *application,gpointer data) {
     GtkWidget *update_buttons=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);gtk_box_append(GTK_BOX(update_buttons),button_new(tr_text("检查更新"),"view-refresh-symbolic",G_CALLBACK(on_check),s));s->install_button=button_new(tr_text("安装更新"),"folder-download-symbolic",G_CALLBACK(on_install),s);gtk_widget_add_css_class(s->install_button,"suggested-action");gtk_widget_set_sensitive(s->install_button,FALSE);gtk_box_append(GTK_BOX(update_buttons),s->install_button);gtk_box_append(GTK_BOX(updates),update_buttons);s->update_text=label_new(tr_text("检查上游 GitHub 的最新稳定版本。"),"dim-label");gtk_label_set_selectable(GTK_LABEL(s->update_text),TRUE);gtk_box_append(GTK_BOX(updates),s->update_text);
     GtkWidget *management=section(s->detail,tr_text("应用管理"));gtk_box_append(GTK_BOX(management),label_new(tr_text("卸载会移至回收站，保留个人配置和数据。"),"dim-label"));gtk_box_append(GTK_BOX(management),button_new(tr_text("修复菜单入口"),"application-menu-symbolic",G_CALLBACK(on_integrate),s));GtkWidget *remove=button_new(tr_text("卸载应用…"),"user-trash-symbolic",G_CALLBACK(on_uninstall),s);gtk_widget_add_css_class(remove,"destructive-action");gtk_widget_set_halign(remove,GTK_ALIGN_START);gtk_box_append(GTK_BOX(management),remove);
     GtkWidget *detail_scroll=gtk_scrolled_window_new();s->detail_scroll=detail_scroll;gtk_widget_set_visible(detail_scroll,FALSE);gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(detail_scroll),GTK_POLICY_NEVER,GTK_POLICY_AUTOMATIC);gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(detail_scroll),s->detail);gtk_widget_set_vexpand(detail_scroll,TRUE);gtk_box_append(GTK_BOX(right),detail_scroll);gtk_paned_set_end_child(GTK_PANED(s->content),right);
-    GtkWidget *footer=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);margins(footer,10);s->spinner=gtk_spinner_new();gtk_box_append(GTK_BOX(footer),s->spinner);s->status=label_new(tr_text("准备就绪"),NULL);gtk_widget_set_hexpand(s->status,TRUE);gtk_label_set_wrap(GTK_LABEL(s->status),FALSE);gtk_label_set_ellipsize(GTK_LABEL(s->status),PANGO_ELLIPSIZE_END);gtk_box_append(GTK_BOX(footer),s->status);gtk_box_append(GTK_BOX(root),footer);
+    GtkWidget *footer=gtk_box_new(GTK_ORIENTATION_HORIZONTAL,8);margins(footer,10);s->spinner=gtk_spinner_new();gtk_box_append(GTK_BOX(footer),s->spinner);s->status=label_new(tr_text("准备就绪"),NULL);gtk_widget_set_hexpand(s->status,TRUE);gtk_label_set_wrap(GTK_LABEL(s->status),FALSE);gtk_label_set_ellipsize(GTK_LABEL(s->status),PANGO_ELLIPSIZE_END);gtk_box_append(GTK_BOX(footer),s->status);s->progress=gtk_progress_bar_new();gtk_progress_bar_set_show_text(GTK_PROGRESS_BAR(s->progress),TRUE);gtk_widget_set_size_request(s->progress,260,-1);gtk_widget_set_visible(s->progress,FALSE);gtk_box_append(GTK_BOX(footer),s->progress);gtk_box_append(GTK_BOX(root),footer);
     const gchar *actions[]={"settings","about","refresh","import","folder","quit",NULL};for(guint i=0;actions[i];i++){GSimpleAction *a=g_simple_action_new(actions[i],NULL);g_signal_connect(a,"activate",G_CALLBACK(on_action),s);g_action_map_add_action(G_ACTION_MAP(application),G_ACTION(a));g_object_unref(a);}
     const gchar *refresh_keys[]={"<Primary>r",NULL},*import_keys[]={"<Primary>o",NULL},*settings_keys[]={"<Primary>comma",NULL},*quit_keys[]={"<Primary>q",NULL};gtk_application_set_accels_for_action(GTK_APPLICATION(application),"app.refresh",refresh_keys);gtk_application_set_accels_for_action(GTK_APPLICATION(application),"app.import",import_keys);gtk_application_set_accels_for_action(GTK_APPLICATION(application),"app.settings",settings_keys);gtk_application_set_accels_for_action(GTK_APPLICATION(application),"app.quit",quit_keys);
     /* Embedded English covers startup and transport errors; scan applies the selected locale. */
-    gtk_window_present(s->window);scan(s);
+    g_timeout_add(350,show_download_progress,s);gtk_window_present(s->window);scan(s);
 }
 int main(int argc,char **argv) {
     init_catalog();

@@ -13,10 +13,12 @@ The application and user guides support 26 languages. Choose a guide below, or c
 - Searchable application list and details: real icon, version, size, architecture and installation path.
 - Default library: `~/Applications`, configurable without moving existing files.
 - Import AppImages, create/repair desktop menu entries, launch applications and open their directory.
+- Importing another version replaces the existing application and retains a restorable Trash backup. Right-click an AppImage in your file manager and choose the localized AppImage Manager under Open With to import it directly.
 - Discover GitHub stable updates from embedded metadata or an explicitly configured official repository; install an architecture-matching AppImage with size/format/digest checks, atomic replacement and rollback data.
 - Recoverable uninstall through freedesktop Trash, preserving personal application data.
 - Real toolkit switching: **GPUI** uses Ely components; **Qt** loads Qt 6; **GNOME** loads GTK 4/libadwaita. Switching toolkit or language saves first and restarts the application.
 - Persistent language, theme, toolkit, directory/repository settings, editing drafts, selected application, window size and maximized state.
+- Draggable, persistent library/detail divider and application display names localized in all 26 languages.
 - AppImage metadata/icon inspection never launches or mounts the application.
 
 ## Install
@@ -42,6 +44,8 @@ Current CI uses native Ubuntu 26.04 x86_64/aarch64 runners, current stable Rust 
 ## Use
 
 Open an application on the left to view its details. If its update source is unknown, enter the upstream `owner/repository`, save it, and check for updates. Unsupported version metadata, missing architecture assets and network failures produce explicit diagnostics. A newer matching asset enables installation.
+
+Update discovery reads public HTTPS Release pages and downloads release attachments directly. Clients need neither the `gh` command nor a GitHub token. `appimage-mannger --repair-registration` restores the file manager's Open With registration if necessary.
 
 Use the window caption to drag or maximize the window. Settings provide the persistent native toolkit, language, light/dark appearance and application library. Directory and repository edits are retained as drafts until applied; existing files are not moved when selecting another library.
 

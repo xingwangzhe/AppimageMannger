@@ -17,7 +17,7 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --release --locked
 cargo build --release --locked
 bun run scripts/package.ts --formats deb
-pkexec apt-get install -y "$PWD"/dist/appimage-mannger_1.0.0_amd64.deb
+pkexec apt-get install -y "$PWD"/dist/appimage-mannger_1.0.1_amd64.deb
 /usr/bin/appimage-mannger
 ```
 
@@ -38,7 +38,7 @@ bun run scripts/package-checksums.ts
 (cd dist && sha256sum -c SHA256SUMS)
 ```
 
-AppImage creation resolves an official appimagetool release and may need the existing gh credential to avoid anonymous API limits. Package/AppDir assembly includes native toolkit libraries/plugins/schemas and third-party notices. System libc and GPU drivers remain a compatibility boundary. Runtime dependency scans must include the Rust engine and both helper ELF files.
+AppImage creation resolves an official appimagetool release over HTTPS. CI can supply its build token to avoid anonymous API limits; installed clients never require gh or a token. Package/AppDir assembly includes native toolkit libraries/plugins/schemas and third-party notices. System libc and GPU drivers remain a compatibility boundary. Runtime dependency scans must include the Rust engine and both helper ELF files.
 
 The workflow builds x86_64 and aarch64 on native current runners. Source and binary AUR recipes are release artifacts; a real pacman `.pkg.tar.zst` is a separate installable archive. There is no automatic AUR service submission.
 
