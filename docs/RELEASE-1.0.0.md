@@ -25,4 +25,16 @@ This record describes the completed scope and records actual verification eviden
 
 ## Final release verification
 
-Pending the final 1.0.0 local build/install/window checks and tagged CI asset/checksum verification. The final evidence and URLs are appended here only after those steps succeed.
+Local build and installation evidence is recorded below. Tagged CI publication remains pending until the workflow completes; actual release URLs and artifact counts are added afterward.
+
+### Local 1.0.0 result (2026-10-27)
+
+- Release binary built successfully with the native Qt and GTK helpers and bundled 26-language catalogs.
+- Strict Clippy passed; 28 Rust regression tests passed before the owner requested stopping additional manual tests.
+- Translation validation passed: 26 locales, 215 message keys, 204 source msgids, all core checks and QuickStarts, no placeholder mismatches.
+- The release DEB was generated at `dist/appimage-mannger_1.0.0_amd64.deb` and installed using `pkexec apt-get install`. The package manager confirmed `ii 1.0.0`.
+- `/usr/bin/appimage-mannger` was started after installation. The desktop launcher continues to use that installed executable.
+- English GPUI rendering, actual GpgFrontend icons and saving the maximized flag were observed during the earlier isolated configuration session. At the owner's request, further manual GUI testing was stopped; an exhaustive 26-language × 3-toolkit visual/restart matrix is not claimed.
+- The application still defaults to `~/Applications`. No update or uninstall was performed on the user's existing GpgFrontend as part of final verification.
+
+The stable Git tag is `v1.0.0`. CI publication results and asset URLs follow after the tagged workflow completes.
