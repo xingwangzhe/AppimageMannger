@@ -1,14 +1,14 @@
 {
   "localeCount": 26,
-  "sourceMsgids": 204,
-  "catalogMsgids": 215,
+  "sourceMsgids": 206,
+  "catalogMsgids": 220,
   "requiredCoreKeys": 22,
   "placeholderErrors": 0,
   "errors": [],
   "locales": [
     {
       "locale": "en",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
       "localizedValues": 0,
       "englishDiagnosticFallbacks": [],
@@ -17,18 +17,18 @@
     },
     {
       "locale": "zh-CN",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 215,
+      "localizedValues": 220,
       "englishDiagnosticFallbacks": [],
       "otherEnglishIdentical": [],
       "quickStart": true
     },
     {
       "locale": "zh-TW",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -65,9 +65,9 @@
     },
     {
       "locale": "ja",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -104,9 +104,9 @@
     },
     {
       "locale": "ko",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -143,9 +143,9 @@
     },
     {
       "locale": "de",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 181,
+      "localizedValues": 186,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -188,9 +188,9 @@
     },
     {
       "locale": "fr",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 177,
+      "localizedValues": 182,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -237,9 +237,9 @@
     },
     {
       "locale": "es",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -276,9 +276,9 @@
     },
     {
       "locale": "pt-BR",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -315,9 +315,9 @@
     },
     {
       "locale": "ru",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -354,9 +354,9 @@
     },
     {
       "locale": "it",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 184,
+      "localizedValues": 188,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -390,15 +390,16 @@
       ],
       "otherEnglishIdentical": [
         "文件",
-        "邮箱：xingwangzhe@outlook.com"
+        "邮箱：xingwangzhe@outlook.com",
+        "邮箱"
       ],
       "quickStart": true
     },
     {
       "locale": "nl",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 185,
+      "localizedValues": 190,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -437,9 +438,9 @@
     },
     {
       "locale": "pl",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -476,9 +477,9 @@
     },
     {
       "locale": "tr",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -515,9 +516,9 @@
     },
     {
       "locale": "uk",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -554,9 +555,9 @@
     },
     {
       "locale": "vi",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 185,
+      "localizedValues": 189,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -589,15 +590,16 @@
         "配置读取失败：{e:#}"
       ],
       "otherEnglishIdentical": [
-        "邮箱：xingwangzhe@outlook.com"
+        "邮箱：xingwangzhe@outlook.com",
+        "邮箱"
       ],
       "quickStart": true
     },
     {
       "locale": "id",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 190,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -629,14 +631,16 @@
         "请选择绝对路径",
         "配置读取失败：{e:#}"
       ],
-      "otherEnglishIdentical": [],
+      "otherEnglishIdentical": [
+        "邮箱"
+      ],
       "quickStart": true
     },
     {
       "locale": "th",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -673,9 +677,9 @@
     },
     {
       "locale": "ar",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -712,9 +716,9 @@
     },
     {
       "locale": "hi",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -751,9 +755,9 @@
     },
     {
       "locale": "bn",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -790,9 +794,9 @@
     },
     {
       "locale": "fa",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -829,9 +833,9 @@
     },
     {
       "locale": "he",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -868,9 +872,9 @@
     },
     {
       "locale": "sv",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 181,
+      "localizedValues": 186,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -913,9 +917,9 @@
     },
     {
       "locale": "cs",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",
@@ -952,9 +956,9 @@
     },
     {
       "locale": "ro",
-      "keys": 215,
+      "keys": 220,
       "coreKeys": 22,
-      "localizedValues": 186,
+      "localizedValues": 191,
       "englishDiagnosticFallbacks": [
         "主题保存失败：{e:#}",
         "保存失败：{e:#}",

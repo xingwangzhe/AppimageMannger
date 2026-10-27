@@ -213,5 +213,10 @@
   "保存": "Zapisz",
   "更改语言后保存并重启应用。": "Zmiana języka zapisuje ustawienia i ponownie uruchamia aplikację.",
   "<h3>AppimageMannger %1</h3><p>真实 Qt 6 Widgets 前端 · Rust 管理引擎</p><p>管理 AppImage 应用、目录、桌面入口和更新。</p><p>作者：xingwangzhe<br>AGPL-3.0<br>Qt 运行版本：%2</p>": "<h3>Menedżer AppImage %1</h3><p>Qt 6 Widgets · Rust</p><p>Informacje o aplikacji · Wersja i aktualizacje</p><p>Autor: xingwangzhe<br>AGPL-3.0-only<br>Qt: %2</p>",
-  "版本 {} · AGPL-3.0": "Wersja {} · AGPL-3.0-only"
+  "版本 {} · AGPL-3.0": "Wersja {} · AGPL-3.0-only",
+  "复制文字": "Kopiuj tekst",
+  "复制图片": "Kopiuj obraz",
+  "作者": "Autor",
+  "邮箱": "E-mail",
+  "个人网站": "Strona osobista"
 }

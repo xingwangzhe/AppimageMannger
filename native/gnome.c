@@ -25,6 +25,78 @@ static const gchar *tr_text(const gchar *key) {
     g_hash_table_replace(source_messages,g_strdup(text),g_strdup(key));
     return text;
 }
+
+static GdkTexture *copy_texture(GtkWidget *widget) {
+    if (!GTK_IS_IMAGE(widget)) return NULL;
+    GtkIconPaintable *icon = NULL;
+    GdkPaintable *paintable = gtk_image_get_paintable(GTK_IMAGE(widget));
+    if (paintable && GDK_IS_TEXTURE(paintable)) return g_object_ref(GDK_TEXTURE(paintable));
+    GFile *file = NULL;
+    if (paintable && GTK_IS_ICON_PAINTABLE(paintable)) file = gtk_icon_paintable_get_file(GTK_ICON_PAINTABLE(paintable));
+    GtkIconTheme *theme = gtk_icon_theme_get_for_display(gtk_widget_get_display(widget));
+    if (gtk_image_get_storage_type(GTK_IMAGE(widget)) == GTK_IMAGE_ICON_NAME) {
+        icon = gtk_icon_theme_lookup_icon(theme, gtk_image_get_icon_name(GTK_IMAGE(widget)), NULL, 128, 1, GTK_TEXT_DIR_NONE, 0);
+    } else if (gtk_image_get_storage_type(GTK_IMAGE(widget)) == GTK_IMAGE_GICON) {
+        icon = gtk_icon_theme_lookup_by_gicon(theme, gtk_image_get_gicon(GTK_IMAGE(widget)), 128, 1, GTK_TEXT_DIR_NONE, 0);
+    }
+    if (icon) file = gtk_icon_paintable_get_file(icon);
+    gchar *path = file ? g_file_get_path(file) : NULL;
+    GError *error = NULL;
+    GdkPixbuf *pixels = path ? gdk_pixbuf_new_from_file_at_scale(path, 1024, 1024, TRUE, &error) : NULL;
+    GdkTexture *texture = pixels ? gdk_texture_new_for_pixbuf(pixels) : NULL;
+    g_clear_object(&pixels); g_clear_object(&icon); g_clear_error(&error); g_free(path);
+    return texture;
+}
+static void copy_content(GtkButton *button, gpointer data) {
+    GtkWidget *popover = data;
+    const gchar *text = g_object_get_data(G_OBJECT(button), "copy-text");
+    GdkTexture *texture = g_object_get_data(G_OBJECT(button), "copy-texture");
+    GdkClipboard *clipboard = gtk_widget_get_clipboard(GTK_WIDGET(button));
+    if (text) gdk_clipboard_set_text(clipboard, text);
+    else if (texture) gdk_clipboard_set_texture(clipboard, texture);
+    gtk_popover_popdown(GTK_POPOVER(popover));
+}
+static void copy_popover_closed(GtkPopover *popover, gpointer data) {
+    (void)data; gtk_widget_unparent(GTK_WIDGET(popover));
+}
+static void copy_menu(GtkGestureClick *gesture, int presses, double x, double y, gpointer data) {
+    (void)presses; GtkWidget *widget = data;
+    const gchar *text = GTK_IS_LABEL(widget) ? gtk_label_get_text(GTK_LABEL(widget)) : NULL;
+    if (GTK_IS_BUTTON(widget)) text = gtk_button_get_label(GTK_BUTTON(widget));
+    GdkTexture *texture = copy_texture(widget);
+    if ((!text || !*text) && !texture) return;
+    GtkWidget *popover = gtk_popover_new(), *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    gtk_widget_set_parent(popover, widget); gtk_popover_set_child(GTK_POPOVER(popover), box);
+    if (text && *text) {
+        GtkWidget *button = gtk_button_new_with_label(tr_text("复制文字"));
+        g_object_set_data_full(G_OBJECT(button), "copy-text", g_strdup(text), g_free);
+        g_signal_connect(button, "clicked", G_CALLBACK(copy_content), popover); gtk_box_append(GTK_BOX(box), button);
+    }
+    if (texture) {
+        GtkWidget *button = gtk_button_new_with_label(tr_text("复制图片"));
+        g_object_set_data_full(G_OBJECT(button), "copy-texture", texture, g_object_unref);
+        g_signal_connect(button, "clicked", G_CALLBACK(copy_content), popover); gtk_box_append(GTK_BOX(box), button);
+    }
+    GdkRectangle rectangle = {(int)x, (int)y, 1, 1}; gtk_popover_set_pointing_to(GTK_POPOVER(popover), &rectangle);
+    g_signal_connect(popover, "closed", G_CALLBACK(copy_popover_closed), NULL);
+    gtk_gesture_set_state(GTK_GESTURE(gesture), GTK_EVENT_SEQUENCE_CLAIMED); gtk_popover_popup(GTK_POPOVER(popover));
+}
+static gboolean copy_widget_mapped(GSignalInvocationHint *hint, guint count, const GValue *values, gpointer data) {
+    (void)hint; (void)count; (void)data;
+    GtkWidget *widget = g_value_get_object(&values[0]);
+    if (g_object_get_data(G_OBJECT(widget), "copy-enabled")) return TRUE;
+    g_object_set_data(G_OBJECT(widget), "copy-enabled", GINT_TO_POINTER(1));
+    if (GTK_IS_LABEL(widget)) {
+        // Action captions have a context menu; dragging data labels selects text.
+        if (!gtk_widget_get_ancestor(widget, GTK_TYPE_BUTTON)) gtk_label_set_selectable(GTK_LABEL(widget), TRUE);
+    }
+    if (GTK_IS_IMAGE(widget) || GTK_IS_BUTTON(widget) ||
+        (GTK_IS_LABEL(widget) && gtk_widget_get_ancestor(widget, GTK_TYPE_BUTTON))) {
+        GtkGesture *gesture = gtk_gesture_click_new(); gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(gesture), GDK_BUTTON_SECONDARY);
+        g_signal_connect(gesture, "pressed", G_CALLBACK(copy_menu), widget); gtk_widget_add_controller(widget, GTK_EVENT_CONTROLLER(gesture));
+    }
+    return TRUE;
+}
 static void retranslate_tree(GtkWidget *widget) {
     if(GTK_IS_LABEL(widget)) {
         const gchar *current=gtk_label_get_text(GTK_LABEL(widget));
@@ -475,6 +547,12 @@ static void on_about(GtkButton *b,gpointer data) {
     GtkWidget *about=adw_about_window_new();adw_about_window_set_application_name(ADW_ABOUT_WINDOW(about),tr_text("AppimageMannger 管理器"));adw_about_window_set_application_icon(ADW_ABOUT_WINDOW(about),"appimage-mannger");
     adw_about_window_set_developer_name(ADW_ABOUT_WINDOW(about),"xingwangzhe");adw_about_window_set_developers(ADW_ABOUT_WINDOW(about),developers);
     adw_about_window_set_version(ADW_ABOUT_WINDOW(about),s->application_version?s->application_version:"");adw_about_window_set_license_type(ADW_ABOUT_WINDOW(about),GTK_LICENSE_AGPL_3_0_ONLY);adw_about_window_set_website(ADW_ABOUT_WINDOW(about),"https://github.com/xingwangzhe/AppimageMannger");
+    adw_about_window_add_link(ADW_ABOUT_WINDOW(about), "GitHub · github.com/xingwangzhe", "https://github.com/xingwangzhe");
+    gchar *email = g_strdup_printf("%s · xingwangzhe@outlook.com", tr_text("邮箱"));
+    gchar *website = g_strdup_printf("%s · xingwangzhe.fun", tr_text("个人网站"));
+    adw_about_window_add_link(ADW_ABOUT_WINDOW(about), email, "mailto:xingwangzhe@outlook.com");
+    adw_about_window_add_link(ADW_ABOUT_WINDOW(about), website, "https://xingwangzhe.fun");
+    g_free(email); g_free(website);
     adw_about_window_set_comments(ADW_ABOUT_WINDOW(about),tr_text("使用真实 GTK4 / libadwaita 原生界面与共享 Rust 管理引擎。"));gtk_window_set_transient_for(GTK_WINDOW(about),s->window);gtk_window_present(GTK_WINDOW(about));
 }
 static void quit_reply(State *s,JsonNode *data,gpointer user_data){(void)data;(void)user_data;g_application_quit(G_APPLICATION(s->application));}
@@ -505,6 +583,13 @@ static GtkWidget *section(GtkWidget *parent,const gchar *heading) {
     GtkWidget *frame=gtk_box_new(GTK_ORIENTATION_VERTICAL,12);margins(frame,20);GtkWidget *wrapper=gtk_frame_new(NULL);gtk_frame_set_child(GTK_FRAME(wrapper),frame);gtk_box_append(GTK_BOX(frame),label_new(heading,"heading"));gtk_box_append(GTK_BOX(parent),wrapper);return frame;
 }
 static void activate(GApplication *application,gpointer data) {
+    static gboolean copy_hook_installed = FALSE;
+    if (!copy_hook_installed) {
+        gpointer widget_class = g_type_class_ref(GTK_TYPE_WIDGET);
+        g_signal_add_emission_hook(g_signal_lookup("map", GTK_TYPE_WIDGET), 0, copy_widget_mapped, NULL, NULL);
+        g_type_class_unref(widget_class);
+        copy_hook_installed = TRUE;
+    }
     const gchar *brand_icon=g_getenv("APPIMAGE_MAN_NGER_ICON");
     if(brand_icon){gchar *folder=g_path_get_dirname(brand_icon);gtk_icon_theme_add_search_path(gtk_icon_theme_get_for_display(gdk_display_get_default()),folder);g_free(folder);}
     State *s=data;if(s->window){gtk_window_present(s->window);return;}

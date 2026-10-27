@@ -213,5 +213,10 @@
   "保存": "Lưu",
   "更改语言后保存并重启应用。": "Đổi ngôn ngữ sẽ lưu cài đặt và khởi động lại ứng dụng.",
   "<h3>AppimageMannger %1</h3><p>真实 Qt 6 Widgets 前端 · Rust 管理引擎</p><p>管理 AppImage 应用、目录、桌面入口和更新。</p><p>作者：xingwangzhe<br>AGPL-3.0<br>Qt 运行版本：%2</p>": "<h3>Trình quản lý AppImage %1</h3><p>Qt 6 Widgets · Rust</p><p>Thông tin ứng dụng · Phiên bản và cập nhật</p><p>Tác giả: xingwangzhe<br>AGPL-3.0-only<br>Qt: %2</p>",
-  "版本 {} · AGPL-3.0": "Phiên bản {} · AGPL-3.0-only"
+  "版本 {} · AGPL-3.0": "Phiên bản {} · AGPL-3.0-only",
+  "复制文字": "Sao chép văn bản",
+  "复制图片": "Sao chép hình ảnh",
+  "作者": "Tác giả",
+  "邮箱": "Email",
+  "个人网站": "Trang cá nhân"
 }

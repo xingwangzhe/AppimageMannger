@@ -59,7 +59,7 @@ Deinstallieren verschiebt Anwendung und Desktop-Einträge in den Papierkorb. Sie
 
 ## Entwicklung
 
-[BUILD-AND-RELEASE](docs/BUILD-AND-RELEASE.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [i18n](docs/i18n/COVERAGE.md) · [1.0.1](docs/RELEASE-1.0.1.md) · [THIRD-PARTY-NOTICES](docs/THIRD-PARTY-NOTICES.md)
+[BUILD-AND-RELEASE](docs/BUILD-AND-RELEASE.md) · [ARCHITECTURE](docs/ARCHITECTURE.md) · [i18n](docs/i18n/COVERAGE.md) · [1.0.2](docs/RELEASE-1.0.2.md) · [THIRD-PARTY-NOTICES](docs/THIRD-PARTY-NOTICES.md)
 
 ```sh
 bun run scripts/check-i18n.ts
@@ -76,4 +76,4 @@ Es gilt AGPL-3.0-only. Nutzung, Änderung und Weitergabe sind nach dieser Lizenz
 
 [Quellcode und Veröffentlichungen](https://github.com/xingwangzhe/AppimageMannger)
 
-AGPL-3.0-only © 2026 xingwangzhe · xingwangzhe@outlook.com · [LICENSE](LICENSE)
+AGPL-3.0-only © 2026 [xingwangzhe](https://github.com/xingwangzhe) · [xingwangzhe@outlook.com](mailto:xingwangzhe@outlook.com) · [xingwangzhe.fun](https://xingwangzhe.fun) · [LICENSE](LICENSE)

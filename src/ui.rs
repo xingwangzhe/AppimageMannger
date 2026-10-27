@@ -1,3 +1,4 @@
+use crate::copy::{Button, text};
 use crate::i18n::tr;
 use crate::{
     manager::{self, AppInfo, Appearance, Config, WindowStyle},
@@ -5,13 +6,13 @@ use crate::{
 };
 use ely_core::{
     Assets,
-    buttons::{Button, ButtonVariant, SegmentedControl},
+    buttons::{ButtonVariant, SegmentedControl},
     forms::{Choice, Input, InputEvent, PathInput, Select, TextInput},
-    layout::{Card, CardHeader, SplitPane},
+    layout::{Card, SplitPane},
     lists::ListItem,
     menus::MenuBar,
     motion::ProgressBar,
-    primitives::{FocusScope, Icon, IconName, Image},
+    primitives::{FocusScope, Icon, IconName},
     theme::{ActiveTheme, IconSize, Mode, Theme},
 };
 use gpui::{
@@ -563,16 +564,13 @@ impl ManagerView {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .child(
-                        Image::new(
-                            "manager-brand",
-                            dirs::cache_dir()
-                                .unwrap_or_default()
-                                .join("appimage-mannger/branding/appimage-mannger.png"),
-                        )
-                        .size(px(36.))
-                        .fit(gpui::ObjectFit::Contain),
-                    )
+                    .child(crate::copy::image(
+                        "manager-brand",
+                        dirs::cache_dir()
+                            .unwrap_or_default()
+                            .join("appimage-mannger/branding/appimage-mannger.png"),
+                        36.,
+                    ))
                     .child(
                         div()
                             .flex()
@@ -581,13 +579,13 @@ impl ManagerView {
                                 div()
                                     .text_sm()
                                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(tr("AppimageMannger 管理器")),
+                                    .child(text(tr("AppimageMannger 管理器"))),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(colors.fg_muted)
-                                    .child(tr("你的 AppImage 应用库")),
+                                    .child(text(tr("你的 AppImage 应用库"))),
                             ),
                     ),
             )
@@ -625,7 +623,19 @@ impl ManagerView {
             .map(|(i, app)| {
                 let selected = self.selected == Some(i) && self.page == Page::Library;
                 ListItem::new(("app", i), app.name.clone())
-                    .description(format!("{} · {}", app.version, human_size(app.size_bytes)))
+                    .editor(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .child(ely_core::typography::SelectableText::new(
+                                ("app-name", i),
+                                app.name.clone(),
+                            ))
+                            .child(ely_core::typography::SelectableText::new(
+                                ("app-description", i),
+                                format!("{} · {}", app.version, human_size(app.size_bytes)),
+                            )),
+                    )
                     .leading(app_icon(app, ("list-icon", i), 38.0, cx))
                     .trailing(
                         Icon::new(IconName::ChevronRight)
@@ -660,8 +670,8 @@ impl ManagerView {
                             .text_xs()
                             .font_weight(gpui::FontWeight::MEDIUM)
                             .text_color(colors.fg_muted)
-                            .child(tr("已安装的应用"))
-                            .child(format!("{}", self.apps.len())),
+                            .child(text(tr("已安装的应用")))
+                            .child(text(format!("{}", self.apps.len()))),
                     )
                     .child(
                         Input::new(&self.search)
@@ -709,12 +719,12 @@ impl ManagerView {
                         .size(IconSize::Lg)
                         .color(colors.accent),
                 )
-                .child(div().text_xl().child(tr("让应用各就其位")))
+                .child(div().text_xl().child(text(tr("让应用各就其位"))))
                 .child(
                     div()
                         .text_sm()
                         .text_color(colors.fg_muted)
-                        .child(tr("导入 AppImage，或在设置中选择已有的应用目录。")),
+                        .child(text(tr("导入 AppImage，或在设置中选择已有的应用目录。"))),
                 )
                 .child(
                     Button::new("empty-import", tr("导入第一个应用"))
@@ -725,213 +735,206 @@ impl ManagerView {
                 )
                 .into_any_element();
         };
-        let header = div()
-            .flex()
-            .items_center()
-            .gap_5()
-            .child(app_icon(&app, "detail-app-icon", 76.0, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(colors.accent)
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(tr("APPIMAGE 应用")),
-                    )
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(app.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(colors.fg_muted)
-                            .child(tr(format!(
-                                "版本 {}   ·   {}",
-                                app.version,
-                                human_size(app.size_bytes)
-                            ))),
-                    ),
-            )
-            .child(
-                Button::new("launch", tr("启动应用"))
-                    .icon(IconName::Play)
-                    .primary()
-                    .disabled(self.busy)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some(app) = this.selected_app() {
-                            this.job(tr("正在启动应用…"), cx, move || {
-                                manager::launch(&app)?;
-                                Ok(JobResult::Message(tr("应用已启动")))
-                            });
-                        }
-                    })),
-            );
-        let mut body = div()
-            .flex()
-            .flex_col()
-            .gap_6()
-            .child(header)
-            .child(
-                card(tr("应用信息"), colors.border, colors.surface)
-                    .child(info(
-                        tr("描述"),
-                        if app.description.is_empty() {
-                            tr("此应用未提供描述")
-                        } else {
-                            app.description.clone()
-                        },
-                        &colors,
-                    ))
-                    .child(info(
-                        tr("安装位置"),
-                        app.path.to_string_lossy().to_string(),
-                        &colors,
-                    ))
-                    .child(info(tr("文件大小"), human_size(app.size_bytes), &colors))
-                    .child(info(tr("运行架构"), app.architecture.clone(), &colors))
-                    .child(
-                        div()
-                            .pt_2()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                Button::new("repair-menu", tr("修复菜单入口"))
-                                    .icon(IconName::Wrench)
-                                    .variant(ButtonVariant::Ghost)
-                                    .disabled(self.busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        if let Some(app) = this.selected_app() {
-                                            let config = this.config.clone();
-                                            this.job(
-                                                tr("正在创建菜单入口…"),
-                                                cx,
-                                                move || {
-                                                    manager::integrate_app(&config, &app)?;
-                                                    Ok(JobResult::Message(tr("菜单入口已创建")))
-                                                },
-                                            );
-                                        }
-                                    })),
-                            )
-                            .child(
-                                Button::new("show-folder", tr("打开所在目录"))
-                                    .icon(IconName::FolderOpen)
-                                    .variant(ButtonVariant::Ghost)
-                                    .disabled(self.busy)
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.open_directory(cx)),
+        let header =
+            div()
+                .flex()
+                .items_center()
+                .gap_5()
+                .child(app_icon(&app, "detail-app-icon", 76.0, cx))
+                .child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(colors.accent)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(text(tr("APPIMAGE 应用"))),
+                        )
+                        .child(
+                            div()
+                                .text_2xl()
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(text(app.name.clone())),
+                        )
+                        .child(div().text_sm().text_color(colors.fg_muted).child(text(tr(
+                            format!("版本 {}   ·   {}", app.version, human_size(app.size_bytes)),
+                        )))),
+                )
+                .child(
+                    Button::new("launch", tr("启动应用"))
+                        .icon(IconName::Play)
+                        .primary()
+                        .disabled(self.busy)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if let Some(app) = this.selected_app() {
+                                this.job(tr("正在启动应用…"), cx, move || {
+                                    manager::launch(&app)?;
+                                    Ok(JobResult::Message(tr("应用已启动")))
+                                });
+                            }
+                        })),
+                );
+        let mut body =
+            div()
+                .flex()
+                .flex_col()
+                .gap_6()
+                .child(header)
+                .child(
+                    card(tr("应用信息"), colors.border, colors.surface)
+                        .child(info(
+                            tr("描述"),
+                            if app.description.is_empty() {
+                                tr("此应用未提供描述")
+                            } else {
+                                app.description.clone()
+                            },
+                            &colors,
+                        ))
+                        .child(info(
+                            tr("安装位置"),
+                            app.path.to_string_lossy().to_string(),
+                            &colors,
+                        ))
+                        .child(info(tr("文件大小"), human_size(app.size_bytes), &colors))
+                        .child(info(tr("运行架构"), app.architecture.clone(), &colors))
+                        .child(
+                            div()
+                                .pt_2()
+                                .flex()
+                                .gap_2()
+                                .child(
+                                    Button::new("repair-menu", tr("修复菜单入口"))
+                                        .icon(IconName::Wrench)
+                                        .variant(ButtonVariant::Ghost)
+                                        .disabled(self.busy)
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            if let Some(app) = this.selected_app() {
+                                                let config = this.config.clone();
+                                                this.job(
+                                                    tr("正在创建菜单入口…"),
+                                                    cx,
+                                                    move || {
+                                                        manager::integrate_app(&config, &app)?;
+                                                        Ok(JobResult::Message(tr("菜单入口已创建")))
+                                                    },
+                                                );
+                                            }
+                                        })),
+                                )
+                                .child(
+                                    Button::new("show-folder", tr("打开所在目录"))
+                                        .icon(IconName::FolderOpen)
+                                        .variant(ButtonVariant::Ghost)
+                                        .disabled(self.busy)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.open_directory(cx)),
+                                        ),
+                                ),
+                        ),
+                )
+                .child(
+                    card(tr("版本与更新"), colors.border, colors.surface)
+                        .child(div().text_sm().text_color(colors.fg_muted).child(text(tr(
+                            "检查 GitHub 最新稳定版；发现适配当前架构的 AppImage 后可安装。",
+                        ))))
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .items_end()
+                                .child(div().flex_1().child(Input::new(&self.source)))
+                                .child(
+                                    Button::new("save-source", tr("保存更新源"))
+                                        .disabled(self.busy)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.save_repository(cx)),
+                                        ),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_3()
+                                .child(
+                                    Button::new("check-update", tr("检查更新"))
+                                        .icon(IconName::RefreshCw)
+                                        .disabled(self.busy)
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.check_update(cx)),
+                                        ),
+                                )
+                                .child(
+                                    Button::new("install-update", tr("安装更新"))
+                                        .icon(IconName::Download)
+                                        .primary()
+                                        .disabled(
+                                            self.busy
+                                                || self
+                                                    .checked
+                                                    .as_ref()
+                                                    .and_then(|c| c.asset.as_ref())
+                                                    .is_none(),
+                                        )
+                                        .on_click(
+                                            cx.listener(|this, _, _, cx| this.install_update(cx)),
+                                        ),
+                                ),
+                        )
+                        .children(self.checked.as_ref().map(|check| {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .p_3()
+                                .rounded_lg()
+                                .bg(colors.sunken)
+                                .child(text(check.status.clone()))
+                                .child(div().text_sm().text_color(colors.fg_muted).child(text(tr(
+                                    format!(
+                                        "当前 {}  →  最新 {}",
+                                        check.current_version, check.latest_version
                                     ),
-                            ),
-                    ),
-            )
-            .child(
-                card(tr("版本与更新"), colors.border, colors.surface)
-                    .child(div().text_sm().text_color(colors.fg_muted).child(tr(
-                        "检查 GitHub 最新稳定版；发现适配当前架构的 AppImage 后可安装。",
-                    )))
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .items_end()
-                            .child(div().flex_1().child(Input::new(&self.source)))
-                            .child(
-                                Button::new("save-source", tr("保存更新源"))
-                                    .disabled(self.busy)
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.save_repository(cx)),
-                                    ),
-                            ),
-                    )
-                    .child(
+                                ))))
+                                .child(div().text_sm().text_color(colors.fg_muted).child(text(
+                                    check.notes.chars().take(1200).collect::<String>(),
+                                )))
+                        })),
+                )
+                .child(
+                    card(tr("应用管理"), colors.border, colors.surface).child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_3()
+                            .justify_between()
+                            .gap_4()
                             .child(
-                                Button::new("check-update", tr("检查更新"))
-                                    .icon(IconName::RefreshCw)
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(text(tr("卸载应用")))
+                                    .child(div().text_sm().text_color(colors.fg_muted).child(
+                                        text(tr("移至回收站并移除菜单入口，保留个人配置。")),
+                                    )),
+                            )
+                            .child(
+                                Button::new("uninstall", tr("卸载…"))
+                                    .icon(IconName::Trash2)
+                                    .variant(ButtonVariant::Danger)
                                     .disabled(self.busy)
-                                    .on_click(cx.listener(|this, _, _, cx| this.check_update(cx))),
-                            )
-                            .child(
-                                Button::new("install-update", tr("安装更新"))
-                                    .icon(IconName::Download)
-                                    .primary()
-                                    .disabled(
-                                        self.busy
-                                            || self
-                                                .checked
-                                                .as_ref()
-                                                .and_then(|c| c.asset.as_ref())
-                                                .is_none(),
-                                    )
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.install_update(cx)),
-                                    ),
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.confirm_uninstall = true;
+                                        cx.notify();
+                                    })),
                             ),
-                    )
-                    .children(self.checked.as_ref().map(|check| {
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .p_3()
-                            .rounded_lg()
-                            .bg(colors.sunken)
-                            .child(check.status.clone())
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(colors.fg_muted)
-                                    .child(tr(format!(
-                                        "当前 {}  →  最新 {}",
-                                        check.current_version, check.latest_version
-                                    ))),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(colors.fg_muted)
-                                    .child(check.notes.chars().take(1200).collect::<String>()),
-                            )
-                    })),
-            )
-            .child(
-                card(tr("应用管理"), colors.border, colors.surface).child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_between()
-                        .gap_4()
-                        .child(
-                            div().flex().flex_col().gap_1().child(tr("卸载应用")).child(
-                                div()
-                                    .text_sm()
-                                    .text_color(colors.fg_muted)
-                                    .child(tr("移至回收站并移除菜单入口，保留个人配置。")),
-                            ),
-                        )
-                        .child(
-                            Button::new("uninstall", tr("卸载…"))
-                                .icon(IconName::Trash2)
-                                .variant(ButtonVariant::Danger)
-                                .disabled(self.busy)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.confirm_uninstall = true;
-                                    cx.notify();
-                                })),
-                        ),
-                ),
-            );
+                    ),
+                );
         if self.confirm_uninstall {
             body =
                 body.child(
@@ -943,7 +946,7 @@ impl ManagerView {
                         .flex()
                         .flex_col()
                         .gap_3()
-                        .child(tr(format!("确认将 {} 移至回收站？", app.name)))
+                        .child(text(tr(format!("确认将 {} 移至回收站？", app.name))))
                         .child(
                             div()
                                 .flex()
@@ -989,28 +992,26 @@ impl ManagerView {
                 div()
                     .text_2xl()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(tr("设置")),
+                    .child(text(tr("设置"))),
             )
             .child(
                 div()
                     .text_sm()
                     .text_color(colors.fg_muted)
-                    .child(tr("为你的 AppImage 选择一个固定的家。")),
+                    .child(text(tr("为你的 AppImage 选择一个固定的家。"))),
             )
 
-            .child(card(tr("语言"),colors.border,colors.surface).child(Select::new("language-selector",choices).selected(self.config.language.clone()).label(tr("语言")).on_change(cx.listener(|this,value:&SharedString,_,cx|this.set_language(value.to_string(),cx)))).child(tr("更改语言后保存并重启应用。")))
+            .child(card(tr("语言"),colors.border,colors.surface).child(Select::new("language-selector",choices).selected(self.config.language.clone()).label(tr("语言")).on_change(cx.listener(|this,value:&SharedString,_,cx|this.set_language(value.to_string(),cx)))).child(text(tr("更改语言后保存并重启应用。"))))
             .child(card(tr("窗口效果"),colors.border,colors.surface)
                 .child(SegmentedControl::new("window-style",match self.config.window_style{WindowStyle::Gpui=>"gpui",WindowStyle::Qt=>"qt",WindowStyle::Gnome=>"gnome"})
                     .segment("gpui","GPUI",None).segment("qt","Qt",None).segment("gnome","GNOME",None)
                     .on_change(cx.listener(|this,value:&SharedString,_,cx|{let style=match value.as_ref(){"qt"=>WindowStyle::Qt,"gnome"=>WindowStyle::Gnome,_=>WindowStyle::Gpui};this.set_window_style(style,cx);})))
-                .child(div().text_sm().text_color(colors.fg_muted).child(tr("GPUI 使用 Ely，Qt 使用 Qt 6，GNOME 使用 GTK 4/libadwaita。选择后保存并重启，后续启动保持此工具包。"))))
+                .child(div().text_sm().text_color(colors.fg_muted).child(text(tr("GPUI 使用 Ely，Qt 使用 Qt 6，GNOME 使用 GTK 4/libadwaita。选择后保存并重启，后续启动保持此工具包。")))))
             .child(
                 card(tr("应用目录"), colors.border, colors.surface)
                     .child(PathInput::new("application-directory", &self.directory).directories())
                     .child(
-                        div().text_sm().text_color(colors.fg_muted).child(
-                            tr("默认 ~/Applications。输入会保存为草稿，点击保存并扫描后应用；已有应用不会被移动。"),
-                        ),
+                        div().text_sm().text_color(colors.fg_muted).child(text(tr("默认 ~/Applications。输入会保存为草稿，点击保存并扫描后应用；已有应用不会被移动。"))),
                     )
                     .child(
                         div().child(
@@ -1037,7 +1038,7 @@ impl ManagerView {
                         div()
                             .text_sm()
                             .text_color(colors.fg_muted)
-                            .child(tr("复制到应用目录并添加菜单入口。源文件会保留。")),
+                            .child(text(tr("复制到应用目录并添加菜单入口。源文件会保留。"))),
                     )
                     .child(
                         div().child(
@@ -1074,25 +1075,42 @@ impl ManagerView {
                 div()
                     .text_2xl()
                     .font_weight(gpui::FontWeight::SEMIBOLD)
-                    .child(tr("AppimageMannger 管理器")),
+                    .child(text(tr("AppimageMannger 管理器"))),
             )
-            .child(tr(format!(
+            .child(text(tr(format!(
                 "版本 {} · AGPL-3.0-only",
                 env!("CARGO_PKG_VERSION")
-            )))
+            ))))
             .child(
                 div()
                     .text_color(colors.fg_muted)
-                    .child(tr("用 Ely + GPUI 构建的原生 Linux AppImage 管理器。")),
+                    .child(text(tr("用 Ely + GPUI 构建的原生 Linux AppImage 管理器。"))),
             )
             .child(
                 card(tr("项目信息"), colors.border, colors.surface)
-                    .child(tr("作者：xingwangzhe"))
-                    .child(tr("邮箱：xingwangzhe@outlook.com"))
-                    .child(tr("架构：x86_64 / aarch64"))
-                    .child(tr(
+                    .child(contact(IconName::User, tr("作者"), "xingwangzhe", None))
+                    .child(contact(
+                        IconName::Code,
+                        "GitHub".into(),
+                        "github.com/xingwangzhe",
+                        Some("https://github.com/xingwangzhe"),
+                    ))
+                    .child(contact(
+                        IconName::Mail,
+                        tr("邮箱"),
+                        "xingwangzhe@outlook.com",
+                        Some("mailto:xingwangzhe@outlook.com"),
+                    ))
+                    .child(contact(
+                        IconName::Globe,
+                        tr("个人网站"),
+                        "xingwangzhe.fun",
+                        Some("https://xingwangzhe.fun"),
+                    ))
+                    .child(text(tr("架构：x86_64 / aarch64")))
+                    .child(text(tr(
                         "更新通过上游 GitHub 发布获取；没有配置更新源时会明确提示。",
-                    )),
+                    ))),
             )
             .child(
                 div().child(
@@ -1105,6 +1123,36 @@ impl ManagerView {
             )
     }
 }
+fn contact(
+    icon: IconName,
+    label: String,
+    value: &'static str,
+    url: Option<&'static str>,
+) -> impl IntoElement {
+    let accessible_label = label.clone();
+    let id = gpui::ElementId::Name(SharedString::from(label.clone()));
+    div()
+        .flex()
+        .items_center()
+        .gap_3()
+        .child(Icon::new(icon).size(IconSize::Sm))
+        .child(ely_core::typography::SelectableText::new(
+            (id.clone(), "label"),
+            label,
+        ))
+        .child(ely_core::typography::SelectableText::new(
+            (id.clone(), "value"),
+            value,
+        ))
+        .when_some(url, |row, url| {
+            row.child(
+                Button::new((id, "open"), "↗")
+                    .name(accessible_label)
+                    .variant(ButtonVariant::Ghost)
+                    .on_click(move |_, _, cx| cx.open_url(url)),
+            )
+        })
+}
 fn human_size(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
         format!("{:.1} MiB", bytes as f64 / 1048576.)
@@ -1113,7 +1161,7 @@ fn human_size(bytes: u64) -> String {
     }
 }
 fn card(title: String, _border: gpui::Hsla, _bg: gpui::Hsla) -> Card {
-    Card::new().header(CardHeader::new(title))
+    Card::new().child(crate::copy::heading(title))
 }
 fn app_icon(
     app: &AppInfo,
@@ -1123,31 +1171,38 @@ fn app_icon(
 ) -> gpui::AnyElement {
     let id = id.into();
     if let Some(path) = &app.icon_path {
-        Image::new(id, path.clone())
-            .fit(gpui::ObjectFit::Contain)
-            .size(px(edge))
-            .rounded_lg()
-            .into_any_element()
+        crate::copy::image(id, path.clone(), edge).into_any_element()
     } else {
-        div()
-            .size(px(edge))
-            .rounded_lg()
-            .bg(cx.theme().colors.sunken)
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(Icon::new(IconName::Package).color(cx.theme().colors.accent))
-            .into_any_element()
+        let fallback =
+            dirs::cache_dir().map(|dir| dir.join("appimage-mannger/branding/appimage-mannger.png"));
+        if let Some(path) = fallback {
+            crate::copy::image(id, path, edge).into_any_element()
+        } else {
+            div()
+                .size(px(edge))
+                .bg(cx.theme().colors.sunken)
+                .into_any_element()
+        }
     }
 }
 
 fn info(label: String, value: String, colors: &ely_core::theme::Palette) -> gpui::Div {
+    let id = gpui::ElementId::Name(SharedString::from(label.clone()));
     div()
         .flex()
         .flex_col()
         .gap_1()
-        .child(div().text_xs().text_color(colors.fg_muted).child(label))
-        .child(div().text_sm().child(value))
+        .child(div().text_xs().text_color(colors.fg_muted).child(
+            ely_core::typography::SelectableText::new((id.clone(), "label"), label),
+        ))
+        .child(
+            div()
+                .text_sm()
+                .child(ely_core::typography::SelectableText::new(
+                    (id, "value"),
+                    value,
+                )),
+        )
 }
 impl Render for ManagerView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1266,7 +1321,7 @@ impl Render for ManagerView {
                                         .flex()
                                         .flex_col()
                                         .gap_1()
-                                        .child(div().text_xs().child(text))
+                                        .child(div().text_xs().child(crate::copy::text(text)))
                                         .child(if let Some(fraction) = fraction {
                                             ProgressBar::new("download-progress", fraction)
                                         } else {
@@ -1282,7 +1337,7 @@ impl Render for ManagerView {
                                     } else {
                                         colors.fg_muted
                                     })
-                                    .child(self.status.clone()),
+                                    .child(text(self.status.clone())),
                             )
                             .child(div().text_xs().text_color(colors.fg_muted).child(
                                 if self.busy {

@@ -47,3 +47,5 @@ For a user-authorized release: build the local deb, install through `pkexec` whe
 - [Native Linux build, verification and release](skills/linux-native-release/SKILL.md)
 
 The 1.0.0 baseline lives in [the original release record](docs/RELEASE-1.0.0.md). The replacement-import, desktop integration, resizable-layout and localized-name fixes are recorded in [1.0.1](docs/RELEASE-1.0.1.md).
+
+Scan/translation performance work, selectable content, image clipboard support and author contact information are recorded in [1.0.2](docs/RELEASE-1.0.2.md). Verify clipboard contents with an external client; GPUI 0.3.10's Linux image clipboard API alone does not publish image MIME types. Native clipboard tools are declared package dependencies and bundled in AppImages.

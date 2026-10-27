@@ -5,7 +5,7 @@ AppimageMannger uses Rust plus native Qt 6 Widgets and GTK 4/libadwaita helpers.
 On Ubuntu 26.04 install build tools and native development dependencies:
 
 ```sh
-sudo apt install build-essential pkg-config clang cmake libfontconfig-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev qt6-base-dev libgtk-4-dev libadwaita-1-dev libjson-glib-dev squashfs-tools desktop-file-utils
+sudo apt install build-essential pkg-config clang cmake libfontconfig-dev libxkbcommon-x11-dev libwayland-dev libvulkan-dev qt6-base-dev libgtk-4-dev libadwaita-1-dev libjson-glib-dev squashfs-tools wl-clipboard xclip desktop-file-utils
 ```
 
 Validation and local packaging:
@@ -17,7 +17,7 @@ cargo clippy --all-targets --locked -- -D warnings
 cargo test --release --locked
 cargo build --release --locked
 bun run scripts/package.ts --formats deb
-pkexec apt-get install -y "$PWD"/dist/appimage-mannger_1.0.1_amd64.deb
+pkexec apt-get install -y "$PWD"/dist/appimage-mannger_1.0.2_amd64.deb
 /usr/bin/appimage-mannger
 ```
 

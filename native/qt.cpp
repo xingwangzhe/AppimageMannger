@@ -6,6 +6,8 @@
 #include <QLibraryInfo>
 #include <QTranslator>
 #include <QCloseEvent>
+#include <QClipboard>
+#include <QContextMenuEvent>
 #include <QComboBox>
 #include <QDesktopServices>
 #include <QDialog>
@@ -25,10 +27,12 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMainWindow>
 #include <QMenuBar>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPalette>
 #include <QPlainTextEdit>
@@ -183,9 +187,60 @@ QLabel *plainLabel(const QString &text = {}) {
     auto *label = new QLabel(text);
     label->setTextFormat(Qt::PlainText);
     label->setWordWrap(true);
-    label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     return label;
 }
+
+// Apply to dialogs and dynamically created status labels as well as the main
+// view. Right-clicking a control copies its caption without activating it.
+class CopySupport final : public QObject {
+public:
+    using QObject::QObject;
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override {
+        auto *widget = qobject_cast<QWidget *>(object);
+        if (!widget) return false;
+        auto *label = qobject_cast<QLabel *>(widget);
+        if (event->type() == QEvent::Polish && label) {
+            label->setTextInteractionFlags(label->textInteractionFlags() | Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+            label->setFocusPolicy(Qt::StrongFocus);
+        }
+        const bool context = event->type() == QEvent::ContextMenu;
+        const bool copyKey = event->type() == QEvent::KeyPress
+            && static_cast<QKeyEvent *>(event)->matches(QKeySequence::Copy);
+        if (!context && !copyKey) return false;
+        QString text;
+        QImage image;
+        if (label) {
+            text = label->hasSelectedText() ? label->selectedText() : label->text();
+            const auto path = label->property("copy-image-path").toString();
+            image = path.isEmpty() ? label->pixmap().toImage() : QImage(path);
+            if (image.isNull()) image = label->pixmap().toImage();
+        } else if (auto *button = qobject_cast<QAbstractButton *>(widget)) {
+            text = button->text();
+        } else if (auto *combo = qobject_cast<QComboBox *>(widget)) {
+            text = combo->currentText();
+        } else {
+            auto *list = qobject_cast<QListWidget *>(widget);
+            if (!list) list = qobject_cast<QListWidget *>(widget->parentWidget());
+            if (list) {
+                auto *item = context ? list->itemAt(list->viewport()->mapFromGlobal(static_cast<QContextMenuEvent *>(event)->globalPos())) : list->currentItem();
+                if (item) { text = item->data(Qt::UserRole + 1).toString(); image = qvariant_cast<QIcon>(item->data(Qt::UserRole + 2)).pixmap(512, 512).toImage(); }
+            }
+        }
+        if (text.isEmpty() && image.isNull()) return false;
+        if (copyKey) {
+            if (!image.isNull() && text.isEmpty()) QGuiApplication::clipboard()->setImage(image);
+            else QGuiApplication::clipboard()->setText(text);
+            return true;
+        }
+        QMenu menu(widget);
+        if (!text.isEmpty()) menu.addAction(T("复制文字"), [text] { QGuiApplication::clipboard()->setText(text); });
+        if (!image.isNull()) menu.addAction(T("复制图片"), [image] { QGuiApplication::clipboard()->setImage(image); });
+        menu.exec(static_cast<QContextMenuEvent *>(event)->globalPos());
+        return true;
+    }
+};
 
 class ManagerWindow final : public QMainWindow {
 public:
@@ -344,9 +399,27 @@ private:
         auto *help = menuBar()->addMenu(T("帮助"));
         auto *about = help->addAction(T("关于 AppimageMannger…"));
         connect(about, &QAction::triggered, this, [this] {
-            QMessageBox::about(this, T("关于 AppimageMannger"),
-                T("<h3>AppimageMannger %1</h3><p>真实 Qt 6 Widgets 前端 · Rust 管理引擎</p><p>管理 AppImage 应用、目录、桌面入口和更新。</p><p>作者：xingwangzhe<br>AGPL-3.0<br>Qt 运行版本：%2</p>")
-                .arg(version_.toHtmlEscaped(), QString::fromLatin1(qVersion())));
+            auto *dialog = new QDialog(this); dialog->setAttribute(Qt::WA_DeleteOnClose);
+            dialog->setMinimumWidth(560);
+            dialog->setWindowTitle(T("关于 AppimageMannger"));
+            auto *body = new QVBoxLayout(dialog);
+            body->addWidget(plainLabel(T("AppimageMannger 管理器") + " " + version_));
+            body->addWidget(plainLabel(T("AppImage 应用管理器")));
+            auto contact = [this, body](const char *iconName, const QString &label, const QString &value, const QString &url = {}) {
+                auto *row = new QHBoxLayout;
+                auto *icon = new QLabel; icon->setPixmap(QIcon::fromTheme(QString::fromLatin1(iconName), style()->standardIcon(QStyle::SP_FileLinkIcon)).pixmap(20, 20));
+                row->addWidget(icon); row->addWidget(plainLabel(label)); row->addWidget(plainLabel(value), 1);
+                if (!url.isEmpty()) { auto *open = new QToolButton; open->setIcon(style()->standardIcon(QStyle::SP_ArrowForward)); open->setAccessibleName(label); open->setToolTip(value); connect(open, &QToolButton::clicked, [url] { QDesktopServices::openUrl(QUrl(url)); }); row->addWidget(open); }
+                body->addLayout(row);
+            };
+            contact("avatar-default", T("作者"), QStringLiteral("xingwangzhe"));
+            contact("applications-development", QStringLiteral("GitHub"), QStringLiteral("github.com/xingwangzhe"), QStringLiteral("https://github.com/xingwangzhe"));
+            contact("mail-send", T("邮箱"), QStringLiteral("xingwangzhe@outlook.com"), QStringLiteral("mailto:xingwangzhe@outlook.com"));
+            contact("internet-web-browser", T("个人网站"), QStringLiteral("xingwangzhe.fun"), QStringLiteral("https://xingwangzhe.fun"));
+            contact("folder-remote", T("项目主页"), QStringLiteral("github.com/xingwangzhe/AppimageMannger"), QStringLiteral("https://github.com/xingwangzhe/AppimageMannger"));
+            body->addWidget(plainLabel(QStringLiteral("AGPL-3.0-only · Qt ") + QString::fromLatin1(qVersion())));
+            auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); buttons->button(QDialogButtonBox::Close)->setText(T("关闭"));
+            connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close); body->addWidget(buttons); dialog->open();
         });
         help->addAction(T("项目主页"), this, [] { QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/xingwangzhe/AppimageMannger"))); });
         auto *toolbar = addToolBar(T("应用工具栏"));
@@ -383,7 +456,7 @@ private:
         auto small = directory_->font(); small.setPointSize(qMax(8, small.pointSize() - 1)); directory_->setFont(small);
         left->addWidget(heading); left->addWidget(count_); left->addWidget(search_); left->addWidget(list_, 1); left->addWidget(directory_);
         connect(search_, &QLineEdit::textChanged, this, [this](const QString &query) {
-            for (int i = 0; i < list_->count(); ++i) list_->item(i)->setHidden(!list_->item(i)->text().contains(query, Qt::CaseInsensitive));
+            for (int i = 0; i < list_->count(); ++i) list_->item(i)->setHidden(!list_->item(i)->data(Qt::UserRole + 1).toString().contains(query, Qt::CaseInsensitive));
         });
         connect(list_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item, QListWidgetItem *) {
             if (!item) return;
@@ -526,9 +599,17 @@ private:
             for (const auto &value : apps_) {
                 const auto app = value.toObject();
                 QIcon icon(app.value("icon_path").toString()); if (icon.isNull()) icon = style()->standardIcon(QStyle::SP_DesktopIcon);
-                auto *item = new QListWidgetItem(icon, app.value("name").toString() + "\n" + app.value("version").toString(), list_);
+                const auto caption = app.value("name").toString() + "\n" + app.value("version").toString();
+                auto *item = new QListWidgetItem(list_);
+                item->setData(Qt::UserRole + 1, caption); item->setData(Qt::UserRole + 2, icon);
+                item->setData(Qt::AccessibleTextRole, caption);
                 item->setData(Qt::UserRole, app.value("path")); item->setToolTip(app.value("path").toString()); item->setSizeHint(QSize(230, 66));
-                item->setHidden(!item->text().contains(search_->text(), Qt::CaseInsensitive));
+                auto *row = new QWidget;
+                auto *layout = new QHBoxLayout(row); layout->setContentsMargins(8, 4, 8, 4);
+                auto *picture = new QLabel; picture->setPixmap(icon.pixmap(36, 36)); picture->setProperty("copy-image-path", app.value("icon_path").toString());
+                layout->addWidget(picture); layout->addWidget(plainLabel(caption), 1);
+                list_->setItemWidget(item, row);
+                item->setHidden(!caption.contains(search_->text(), Qt::CaseInsensitive));
                 if (app.value("path").toString() == target) selected = item;
             }
             if (!selected && list_->count()) selected = list_->item(0);
@@ -545,6 +626,7 @@ private:
         name_->setText(app.value("name").toString()); summary_->setText(app.value("description").toString());
         QIcon icon(app.value("icon_path").toString()); if (icon.isNull()) icon = style()->standardIcon(QStyle::SP_DesktopIcon);
         icon_->setPixmap(icon.pixmap(QSize(76, 76)));
+        icon_->setProperty("copy-image-path", app.value("icon_path").toString());
         versionLabel_->setText(app.value("version").toString()); sizeLabel_->setText(byteSize(app.value("size_bytes").toDouble())); architecture_->setText(app.value("architecture").toString()); path_->setText(app.value("path").toString());
         const auto drafts = config_.value("repository_drafts").toObject();
         repository_->setText(drafts.contains(QFileInfo(selectedPath_).fileName()) ? drafts.value(QFileInfo(selectedPath_).fileName()).toString() : app.value("repository").toString());
@@ -677,6 +759,8 @@ private:
 
 int main(int argc, char **argv) {
     QApplication application(argc, argv);
+    CopySupport copySupport;
+    application.installEventFilter(&copySupport);
     application.setApplicationName(QStringLiteral("AppimageMannger"));
     application.setApplicationDisplayName(T("AppimageMannger 管理器"));
     application.setOrganizationName(QStringLiteral("xingwangzhe"));

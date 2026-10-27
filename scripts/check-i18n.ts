@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 
 const root = resolve(import.meta.dir, '..');
 const locales = ['en','zh-CN','zh-TW','ja','ko','de','fr','es','pt-BR','ru','it','nl','pl','tr','uk','vi','id','th','ar','hi','bn','fa','he','sv','cs','ro'];
-const sources = ['src/ui.rs', 'native/qt.cpp', 'native/gnome.c'];
+const sources = ['src/ui.rs', 'src/copy.rs', 'native/qt.cpp', 'native/gnome.c'];
 const requiredCore = ['设置','导入','卸载应用','检查更新','安装更新','语言','外观','保存更新源','应用信息','安装位置','打开目录','取消','关闭','浅色','深色','界面后端','跟随系统','保存并扫描','项目主页','选择本地 .AppImage 文件','确认','保存'];
 const intentionallyEnglish = /失败|无效|无法|超出|通讯|没有返回|超时|不能包含|必须是|请输入有效|请选择绝对|找不到|未正常完成/;
 const errors: string[] = [];
@@ -111,7 +111,7 @@ for (const locale of locales) {
   if (screenshots.length !== 3 || screenshots.some(path => !/^docs\/images\/(ely-gpui|qt|gnome)-en\.png$/.test(path))) errors.push(`README must use exactly the shared English screenshots: ${locale}`);
   for (const match of readme.matchAll(/\]\(([^)]+)\)/g)) {
     const target = match[1].split('#')[0];
-    if (target && !/^https?:/.test(target) && !existsSync(resolve(root, target))) errors.push(`Broken README link: ${locale}/${target}`);
+    if (target && !/^(https?:|mailto:)/.test(target) && !existsSync(resolve(root, target))) errors.push(`Broken README link: ${locale}/${target}`);
   }
 }
 const screenshotSizes: Record<string, [number, number]> = {'ely-gpui-en.png':[1440,1040], 'qt-en.png':[1460,1060], 'gnome-en.png':[1490,1090]};

@@ -1,4 +1,5 @@
 mod chrome;
+mod copy;
 mod frontends;
 mod i18n;
 mod manager;

@@ -206,7 +206,7 @@ fn usable_icon_file(path: &Path) -> bool {
     };
     icon_extension(&bytes).is_some()
 }
-fn icon_extension(bytes: &[u8]) -> Option<&'static str> {
+pub(crate) fn icon_extension(bytes: &[u8]) -> Option<&'static str> {
     if bytes.len() > ICON_LIMIT || bytes.is_empty() {
         return None;
     }

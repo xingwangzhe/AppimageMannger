@@ -177,10 +177,13 @@ pub fn scan(config: &Config) -> Result<Vec<AppInfo>> {
         "Applications path is not a directory"
     );
     let mut apps = Vec::new();
+    // A scan uses one snapshot; reopening every launcher for every image makes
+    // desktop I/O grow with the product of the two directory sizes.
+    let desktops = read_desktops().unwrap_or_default();
     for entry in fs::read_dir(&config.applications_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if entry.file_type()?.is_symlink() || !entry.file_type()?.is_file() {
+        if !entry.file_type()?.is_file() {
             continue;
         }
         if path
@@ -189,15 +192,29 @@ pub fn scan(config: &Config) -> Result<Vec<AppInfo>> {
         {
             continue;
         }
-        if let Ok(app) = inspect(config, &path) {
+        let target = DesktopTarget::new(&path);
+        let desktop = desktops
+            .iter()
+            .find(|desktop| target.matches(desktop))
+            .cloned()
+            .unwrap_or_default();
+        if let Ok(app) = inspect_with_desktop(config, &path, desktop) {
             apps.push(app);
         }
     }
-    apps.sort_by_key(|a| a.name.to_lowercase());
+    apps.sort_by_cached_key(|a| a.name.to_lowercase());
     Ok(apps)
 }
 
 pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
+    inspect_with_desktop(config, path, find_desktop(path).unwrap_or_default())
+}
+
+fn inspect_with_desktop(
+    config: &Config,
+    path: &Path,
+    mut desktop: DesktopMetadata,
+) -> Result<AppInfo> {
     let header = validate_appimage(path)?;
     ensure!(
         !path.to_string_lossy().chars().any(char::is_control),
@@ -221,7 +238,6 @@ pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
     if name.is_empty() {
         name = filename.clone();
     }
-    let mut desktop = find_desktop(path).unwrap_or_default();
     // Embedded publisher metadata is authoritative; generated launchers may be old.
     if let Some(embedded) = crate::metadata::embedded_desktop(path) {
         desktop.values.extend(embedded);
@@ -241,7 +257,8 @@ pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
         .ok()
         .flatten()
         .or_else(|| desktop.values.get("X-AppImage-UpdateInformation").cloned());
-    if let Ok(Some(installed)) = installed_version(path, &stable_id(&filename)) {
+    let id = stable_id(&filename);
+    if let Ok(Some(installed)) = installed_version(path, &id) {
         version = Some(installed);
     }
     let repository = config
@@ -256,10 +273,10 @@ pub fn inspect(config: &Config, path: &Path) -> Result<AppInfo> {
                 .and_then(|s| normalize_repository(s).ok())
         });
     Ok(AppInfo {
-        id: stable_id(&filename),
         update_progress_path: user_data_dir()?
             .join("appimage-mannger/progress")
-            .join(format!("{}.json", stable_id(&filename))),
+            .join(format!("{id}.json")),
+        id,
         name,
         version: version.unwrap_or_else(|| "Unknown".into()),
         path: path.to_path_buf(),
@@ -844,7 +861,7 @@ fn filename_version(name: &str) -> Option<String> {
         }
     })
 }
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct DesktopMetadata {
     path: Option<PathBuf>,
     values: BTreeMap<String, String>,
@@ -853,6 +870,14 @@ fn find_desktop(path: &Path) -> Result<DesktopMetadata> {
     Ok(find_desktops(path)?.into_iter().next().unwrap_or_default())
 }
 fn find_desktops(path: &Path) -> Result<Vec<DesktopMetadata>> {
+    let target = DesktopTarget::new(path);
+    Ok(read_desktops()?
+        .into_iter()
+        .filter(|desktop| target.matches(desktop))
+        .collect())
+}
+
+fn read_desktops() -> Result<Vec<DesktopMetadata>> {
     let dir = applications_desktop_dir()?;
     if !dir.exists() {
         return Ok(Vec::new());
@@ -881,33 +906,42 @@ fn find_desktops(path: &Path) -> Result<Vec<DesktopMetadata>> {
                 values.insert(k.to_string(), v.to_string());
             }
         }
-        let matches = values
-            .get("TryExec")
-            .is_some_and(|v| v.trim_matches('"') == path.to_string_lossy())
-            || values
-                .get("Exec")
-                .is_some_and(|v| desktop_exec_matches(v, path));
-        if matches {
-            found.push(DesktopMetadata {
-                path: Some(entry.path()),
-                values,
-            });
-        }
+        found.push(DesktopMetadata {
+            path: Some(entry.path()),
+            values,
+        });
     }
     Ok(found)
 }
-fn desktop_exec_matches(value: &str, path: &Path) -> bool {
-    [desktop_exec(path), path.to_string_lossy().to_string()]
-        .iter()
-        .any(|p| {
-            value.strip_prefix(p).is_some_and(|rest| {
-                rest.is_empty()
-                    || rest.starts_with(' ')
-                        && rest
-                            .split_whitespace()
-                            .all(|a| ["%f", "%F", "%u", "%U"].contains(&a))
+struct DesktopTarget {
+    plain: String,
+    quoted: String,
+}
+impl DesktopTarget {
+    fn new(path: &Path) -> Self {
+        Self {
+            plain: path.to_string_lossy().into_owned(),
+            quoted: desktop_exec(path),
+        }
+    }
+
+    fn matches(&self, desktop: &DesktopMetadata) -> bool {
+        desktop
+            .values
+            .get("TryExec")
+            .is_some_and(|v| v.trim_matches('"') == self.plain)
+            || desktop.values.get("Exec").is_some_and(|value| {
+                [&self.quoted, &self.plain].iter().any(|prefix| {
+                    value.strip_prefix(prefix.as_str()).is_some_and(|rest| {
+                        rest.is_empty()
+                            || rest.starts_with(' ')
+                                && rest
+                                    .split_whitespace()
+                                    .all(|a| ["%f", "%F", "%u", "%U"].contains(&a))
+                    })
+                })
             })
-        })
+    }
 }
 
 /// Read a bounded ELF section; no subprocess and no AppImage execution.
@@ -1181,6 +1215,60 @@ mod tests {
         };
         assert!(ensure_managed_path(&c, &file).is_err());
         assert!(file.exists());
+    }
+    #[test]
+    fn scan_snapshot_preserves_launcher_matching_and_refreshes_changes() {
+        let library = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        with_test_data(data.path(), || {
+            let config = Config {
+                applications_dir: library.path().into(),
+                ..Config::default()
+            };
+            let desktop_dir = data.path().join("applications");
+            fs::create_dir_all(&desktop_dir).unwrap();
+            for (index, filename) in ["a %f $x.AppImage", "b space.AppImage", "c.AppImage"]
+                .iter()
+                .enumerate()
+            {
+                let path = library.path().join(filename);
+                fixture(&path);
+                let command = match index {
+                    0 => format!("Exec={} %F %u", desktop_exec(&path)),
+                    1 => format!("TryExec=\"{}\"", path.display()),
+                    _ => format!("Exec={}", path.display()),
+                };
+                fs::write(
+                    desktop_dir.join(format!("{index}.desktop")),
+                    format!("[Desktop Entry]\nName=Tool {index}\n{command}\n"),
+                )
+                .unwrap();
+            }
+            let list = scan(&config).unwrap();
+            assert_eq!(list.len(), 3);
+            for (index, app) in list.iter().enumerate() {
+                assert_eq!(app.name, format!("Tool {index}"));
+                assert_eq!(
+                    serde_json::to_value(app).unwrap(),
+                    serde_json::to_value(inspect(&config, &app.path).unwrap()).unwrap()
+                );
+            }
+            let path = library.path().join("c.AppImage");
+            for command in [
+                format!("{}extra %F", path.display()),
+                format!("{} --unsafe-option", desktop_exec(&path)),
+            ] {
+                fs::write(
+                    desktop_dir.join("2.desktop"),
+                    format!("[Desktop Entry]\nName=Wrong application\nExec={command}\n"),
+                )
+                .unwrap();
+                let list = scan(&config).unwrap();
+                let app = list.iter().find(|app| app.path == path).unwrap();
+                assert_eq!(app.name, "c");
+                assert!(app.desktop_file.is_none());
+            }
+        });
     }
     #[test]
     fn normalizes_only_valid_github_repositories() {
